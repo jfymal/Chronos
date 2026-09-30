@@ -22,6 +22,41 @@ let visibles = 60;
 let obraActual = null;
 const urlCache = new Map();
 
+const AJUSTES_DEFECTO = { comprimir: true, maxDim: 1920, calidad: 0.82 };
+let ajustes = { ...AJUSTES_DEFECTO };
+async function cargarAjustes() {
+  const m = await db.get('meta', 'ajustes');
+  ajustes = { ...AJUSTES_DEFECTO, ...((m && m.valor) || {}) };
+  return ajustes;
+}
+async function guardarAjustes(cambios) {
+  ajustes = { ...ajustes, ...cambios };
+  await db.put('meta', { k: 'ajustes', valor: ajustes });
+}
+
+// Reduce tamaño y reescala una foto antes de guardarla.
+async function prepararFoto(file) {
+  if (!ajustes.comprimir) return file;
+  if (!file.type || !file.type.startsWith('image/') || file.type === 'image/gif') return file;
+  const esPng = file.type === 'image/png';
+  let bmp;
+  try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
+  catch (_) { try { bmp = await createImageBitmap(file); } catch (e) { return file; } }
+  const max = Math.max(bmp.width, bmp.height);
+  const escala = Math.min(1, (ajustes.maxDim || 1920) / max);
+  if (escala >= 1 && file.size <= 1.2 * 1024 * 1024) { if (bmp.close) bmp.close(); return file; }
+  const w = Math.max(1, Math.round(bmp.width * escala));
+  const h = Math.max(1, Math.round(bmp.height * escala));
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  c.getContext('2d').drawImage(bmp, 0, 0, w, h);
+  if (bmp.close) bmp.close();
+  const salida = await new Promise((res) => c.toBlob(res, esPng ? 'image/png' : 'image/jpeg', esPng ? undefined : (ajustes.calidad || 0.82)));
+  if (!salida || salida.size >= file.size) return file;
+  const base = (file.name || 'foto').replace(/\.[^.]+$/, '');
+  return new File([salida], base + (esPng ? '.png' : '.jpg'), { type: esPng ? 'image/png' : 'image/jpeg' });
+}
+
 /* ============================ utilidades ============================ */
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'id-' + Date.now() + '-' + Math.random().toString(36).slice(2));
 const pad = (n) => String(n).padStart(2, '0');
@@ -175,7 +210,8 @@ function entryMenu(obraId) {
 }
 
 async function addFiles(obraId, files, tipo) {
-  for (const f of files) {
+  for (const f0 of files) {
+    const f = tipo === 'foto' ? await prepararFoto(f0) : f0;
     const blobId = uid();
     await db.put('blobs', { id: blobId, blob: f, nombre: f.name || (tipo === 'foto' ? 'foto.jpg' : 'documento.pdf'), tipo: f.type });
     await db.put('entries', {
@@ -507,7 +543,7 @@ async function openEditor(obraId, baseEntry) {
     }
   }
 
-  const MAX = 2400;
+  const MAX = ajustes.comprimir ? (ajustes.maxDim || 1920) : 2400;
   let W, H;
   if (base) {
     const s = Math.min(1, MAX / Math.max(base.width, base.height));
@@ -668,7 +704,7 @@ async function openEditor(obraId, baseEntry) {
   ov.querySelector('#ed-cancel').addEventListener('click', cerrar);
   ov.querySelector('#ed-save').addEventListener('click', async () => {
     const tipo = base ? 'image/jpeg' : 'image/png';
-    const blob = await new Promise((res) => canvas.toBlob(res, tipo, 0.92));
+    const blob = await new Promise((res) => canvas.toBlob(res, tipo, tipo === 'image/jpeg' ? (ajustes.calidad || 0.82) : undefined));
     if (!blob) { alert('No se pudo generar la imagen.'); return; }
     const blobId = uid();
     const baseNombre = (baseEntry && baseEntry.nombre ? baseEntry.nombre.replace(/\.[^.]+$/, '') : 'Lienzo');
@@ -755,6 +791,7 @@ function settingsDialog() {
     <h2>Ajustes</h2>
     <div class="menu-list">
       <button id="s_notif">🔔 Activar notificaciones</button>
+      <button id="s_calidad">🖼️ Calidad de las fotos</button>
       <button id="s_export">⬇️ Exportar copia de seguridad (.json)</button>
       <button id="s_import">⬆️ Importar copia de seguridad</button>
       <button id="s_migracion">📥 Importar migración de AppSheet (1 clic)</button>
@@ -771,6 +808,7 @@ function settingsDialog() {
     m.querySelector('#s_export').onclick = exportBackup;
     m.querySelector('#s_import').onclick = importBackup;
     m.querySelector('#s_migracion').onclick = importarDesdeServidor;
+    m.querySelector('#s_calidad').onclick = calidadDialog;
     m.querySelector('#s_drive').onclick = sincronizarDrive;
   });
 }
@@ -807,6 +845,33 @@ async function importarDesdeServidor() {
   }
   await reload(); closeModal(); route();
   alert(`Importación terminada: ${ok} de ${archivos.length}.${err ? ` Errores: ${err}.` : ''}`);
+}
+
+function calidadDialog() {
+  const ops = [
+    { max: 1600, t: 'Ligera', d: '1600 px · ~250 KB por foto' },
+    { max: 1920, t: 'Recomendada', d: '1920 px · ~450 KB por foto' },
+    { max: 2560, t: 'Alta', d: '2560 px · ~800 KB por foto' },
+    { max: 0, t: 'Sin comprimir', d: 'tamaño original de la cámara (3-6 MB)' },
+  ];
+  const marcado = (o) => (o.max === 0 ? !ajustes.comprimir : (ajustes.comprimir && ajustes.maxDim === o.max));
+  openModal(`
+    <h2>Calidad de las fotos</h2>
+    <p class="hint">Se aplica a las fotos nuevas: cámara, galería y anotaciones. Las que ya tienes no se tocan.</p>
+    <div class="menu-list">
+      ${ops.map((o) => `<button data-max="${o.max}">${marcado(o) ? '✅ ' : ''}${o.t} <span class="hint">— ${o.d}</span></button>`).join('')}
+    </div>
+    <div class="modalactions"><button class="btn" id="q_close">Cerrar</button></div>`, (m) => {
+    m.querySelectorAll('[data-max]').forEach((b) => {
+      b.onclick = async () => {
+        const max = Number(b.dataset.max);
+        await guardarAjustes({ comprimir: max > 0, maxDim: max > 0 ? max : 1920 });
+        closeModal();
+        route();
+      };
+    });
+    m.querySelector('#q_close').onclick = closeModal;
+  });
 }
 
 async function exportBackup() {
@@ -948,6 +1013,7 @@ async function init() {
   if ('serviceWorker' in navigator) {
     try { await navigator.serviceWorker.register('sw.js'); } catch (_) { /* sin SW */ }
   }
+  await cargarAjustes();
   await reload();
   route();
   refrescarBotonSync();
