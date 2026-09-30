@@ -1069,11 +1069,20 @@ view.addEventListener('click', async (ev) => {
 backBtn.onclick = () => { location.hash = '#/'; };
 document.querySelectorAll('.tab').forEach((t) => { t.onclick = () => { location.hash = t.dataset.nav; }; });
 searchBtn.onclick = () => { searchBar.hidden = !searchBar.hidden; if (!searchBar.hidden) searchInput.focus(); };
-syncBtn.onclick = sincronizarDrive;
+syncBtn.onclick = () => sincronizarDrive();
 searchInput.oninput = () => { filtro = searchInput.value; renderObras(); };
 menuBtn.onclick = settingsDialog;
 window.addEventListener('hashchange', route);
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+// Sincronización automática: al cambiar datos, al recuperar red y al volver a la app.
+db.onWrite(() => programarSync());
+window.addEventListener('online', () => programarSync(2000));
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState !== 'visible') return;
+  const u = await drive.ultimaSync();
+  if (minutosDesde(u) > 10) programarSync(1500);
+});
 
 /* ============================ arranque ============================ */
 async function init() {
