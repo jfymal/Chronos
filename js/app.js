@@ -727,7 +727,8 @@ async function sincronizarDrive() {
     const r = await drive.sincronizar((msg) => { pageTitle.textContent = msg; });
     await reload();
     route();
-    alert(`Sincronizado con Drive.\n\nObras: ${r.obras}\nEntradas: ${r.entries}\nArchivos subidos: ${r.subidos}\nArchivos bajados: ${r.bajados}`);
+    const extra = r.movidos ? `\nArchivos reorganizados: ${r.movidos}` : '';
+    alert(`Sincronizado con Drive.\n\nObras: ${r.obras}\nEntradas: ${r.entries}\nArchivos subidos: ${r.subidos}\nArchivos bajados: ${r.bajados}${extra}`);
   } catch (err) {
     console.error(err);
     closeModal();
