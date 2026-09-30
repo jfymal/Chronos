@@ -269,7 +269,7 @@ function setActiveTab(name) {
 }
 
 async function renderObras() {
-  pageTitle.textContent = 'Obras';
+  pageTitle.textContent = 'Chronos';
   backBtn.hidden = true;
   fab.hidden = false;
   fab.onclick = () => obraDialog();

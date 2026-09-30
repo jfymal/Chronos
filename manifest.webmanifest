@@ -1,6 +1,6 @@
 {
-  "name": "Obras",
-  "short_name": "Obras",
+  "name": "Chronos",
+  "short_name": "Chronos",
   "description": "Gestión de obras: fotos, comentarios, recordatorios, PDFs y enlaces.",
   "start_url": "./index.html",
   "scope": "./",
