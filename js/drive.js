@@ -54,17 +54,36 @@ function nombreLegible(entry, blob) {
 }
 
 /* ------------------------------- token ------------------------------- */
-function cargarGIS() {
-  return new Promise((res, rej) => {
-    if (window.google && window.google.accounts && window.google.accounts.oauth2) return res();
-    const s = document.createElement('script');
-    s.src = 'https://accounts.google.com/gsi/client';
-    s.async = true;
-    s.defer = true;
-    s.onload = () => res();
-    s.onerror = () => rej(new Error('No se pudo cargar Google Identity Services. ¿Hay conexión?'));
-    document.head.appendChild(s);
-  });
+const listo = () => !!(window.google && window.google.accounts && window.google.accounts.oauth2);
+
+async function cargarGIS() {
+  if (listo()) return;
+  for (let intento = 1; intento <= 2; intento++) {
+    try {
+      await new Promise((res, rej) => {
+        const previo = document.getElementById('gis-script');
+        if (previo) previo.remove();
+        const s = document.createElement('script');
+        s.id = 'gis-script';
+        s.src = 'https://accounts.google.com/gsi/client';
+        s.async = true;
+        s.defer = true;
+        s.onload = () => res();
+        s.onerror = () => rej(new Error('descarga'));
+        document.head.appendChild(s);
+      });
+      if (listo()) return;
+      throw new Error('carga');
+    } catch (e) {
+      if (intento === 2) {
+        let pista = ' Comprueba la conexión.';
+        if (!navigator.onLine) pista = ' El dispositivo está SIN CONEXIÓN.';
+        else pista += ' Si usas un bloqueador de anuncios o Brave, prueba a permitir accounts.google.com.';
+        throw new Error('No se pudo cargar Google Identity Services.' + pista);
+      }
+      await new Promise((r) => setTimeout(r, 800));
+    }
+  }
 }
 
 async function pedirToken(interactivo) {
