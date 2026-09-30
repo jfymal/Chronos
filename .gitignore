@@ -1,0 +1,7 @@
+# copia local de la migración de AppSheet (1,2 GB) — no se publica
+/rescate
+/rescate-appsheet
+
+# ruido del sistema
+.DS_Store
+Thumbs.db
