@@ -1099,5 +1099,11 @@ async function init() {
   }
   checkReminders();
   setInterval(checkReminders, 60000);
+  // Cada 5 minutos, si hay algo pendiente y las condiciones lo permiten.
+  setInterval(async () => {
+    if (!ajustes.autoSync || !drive.configurado()) return;
+    const u = await drive.ultimaSync();
+    if (minutosDesde(u) > 5) programarSync(1000);
+  }, 5 * 60 * 1000);
 }
 init();
