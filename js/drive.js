@@ -6,7 +6,9 @@
 //   ObrasApp/
 //     datos.json              índice de obras, entradas y borrados
 //     <Nombre de obra>/       una carpeta por obra
-//        260408_080313.jpg    ficheros con nombre legible
+//        Informe.pdf          documentos en la raíz de la obra
+//        Fotos/
+//           260408_080313.jpg fotos, con nombre legible
 import * as db from './db.js';
 import { CLIENT_ID, CARPETA_DRIVE, SUBIDA_PARALELA } from './config.js';
 
@@ -148,16 +150,47 @@ async function asegurarCarpeta() {
   return carpetaId;
 }
 
-// Carpeta de una obra (se crea si no existe). Se resuelve por nombre.
-async function carpetaDeObra(nombre) {
+// Carpeta de una obra (se crea si no existe). `sub` = subcarpeta opcional ("Fotos").
+async function carpetaDeObra(nombre, sub) {
   const nombreSeguro = limpiarNombre(nombre) || 'Sin obra';
-  if (carpetasObra.has(nombreSeguro)) return carpetasObra.get(nombreSeguro);
+  const clave = nombreSeguro + '|' + (sub || '');
+  if (carpetasObra.has(clave)) return carpetasObra.get(clave);
   await asegurarCarpeta();
-  const q = `name='${nombreSeguro.replace(/'/g, "\\'")}' and mimeType='${MIME_CARPETA}' and trashed=false and '${carpetaId}' in parents`;
-  const f = await listar(q);
-  const id = f.length ? f[0].id : await crearCarpeta(nombreSeguro, carpetaId);
-  carpetasObra.set(nombreSeguro, id);
-  return id;
+
+  let baseId;
+  const claveBase = nombreSeguro + '|';
+  if (carpetasObra.has(claveBase)) {
+    baseId = carpetasObra.get(claveBase);
+  } else {
+    const q = `name='${nombreSeguro.replace(/'/g, "\\'")}' and mimeType='${MIME_CARPETA}' and trashed=false and '${carpetaId}' in parents`;
+    const f = await listar(q);
+    baseId = f.length ? f[0].id : await crearCarpeta(nombreSeguro, carpetaId);
+    carpetasObra.set(claveBase, baseId);
+  }
+  if (!sub) return baseId;
+
+  const subSeguro = limpiarNombre(sub);
+  const q2 = `name='${subSeguro}' and mimeType='${MIME_CARPETA}' and trashed=false and '${baseId}' in parents`;
+  const f2 = await listar(q2);
+  const subId = f2.length ? f2[0].id : await crearCarpeta(subSeguro, baseId);
+  carpetasObra.set(clave, subId);
+  return subId;
+}
+
+// Todos los ficheros bajo ObrasApp (un nivel de subcarpetas dentro de cada obra).
+async function listarArbol() {
+  const out = [];
+  const nivel1 = await listar(`'${carpetaId}' in parents and mimeType='${MIME_CARPETA}' and trashed=false`);
+  for (const c1 of nivel1) {
+    const nivel2 = await listar(`'${c1.id}' in parents and mimeType='${MIME_CARPETA}' and trashed=false`);
+    const dirs = [{ id: c1.id, ruta: c1.name }];
+    for (const c2 of nivel2) dirs.push({ id: c2.id, ruta: c1.name + '/' + c2.name });
+    for (const d of dirs) {
+      const fs = await listar(`'${d.id}' in parents and mimeType!='${MIME_CARPETA}' and trashed=false`);
+      for (const f of fs) out.push({ id: f.id, name: f.name, carpetaId: d.id, carpeta: d.ruta });
+    }
+  }
+  return out;
 }
 
 async function subirNuevo(nombre, blob, padre) {
@@ -295,12 +328,7 @@ export async function sincronizar(onProgreso = () => {}) {
 
   // --- archivos ---
   onProgreso('Revisando archivos…');
-  const carpetas = await listar(`'${carpetaId}' in parents and mimeType='${MIME_CARPETA}' and trashed=false`);
-  const arbol = [];
-  for (const c of carpetas) {
-    const fs = await listar(`'${c.id}' in parents and trashed=false`);
-    for (const f of fs) arbol.push({ id: f.id, name: f.name, carpetaId: c.id, carpeta: c.name });
-  }
+  const arbol = await listarArbol();
   const porNombre = new Map(arbol.map((f) => [f.name, f]));           // esquema antiguo: nombre == blobId
   const porId = new Map(arbol.map((f) => [f.id, f]));
   const porCarpetaYNombre = new Map(arbol.map((f) => [f.carpetaId + '|' + f.name, f]));
@@ -326,7 +354,9 @@ export async function sincronizar(onProgreso = () => {}) {
     if (revisados % 25 === 0) onProgreso(`Ordenando archivos… ${revisados}/${porBlob.size}`);
 
     const obra = obrasM.get(entry.obraId);
-    const carpetaDestino = await carpetaDeObra((obra && obra.nombre) || 'Sin obra');
+    // las fotos van a una subcarpeta "Fotos"; el resto (PDF, etc.) a la raíz de la obra
+    const sub = entry.tipo === 'foto' ? 'Fotos' : null;
+    const carpetaDestino = await carpetaDeObra((obra && obra.nombre) || 'Sin obra', sub);
     if (!ocupados.has(carpetaDestino)) ocupados.set(carpetaDestino, new Set());
     const nombresCarpeta = ocupados.get(carpetaDestino);
 
@@ -407,7 +437,8 @@ export async function sincronizar(onProgreso = () => {}) {
       const entry = entriesM.get(entryId);
       if (entry) {
         const obra = obrasM.get(entry.obraId);
-        const destino = await carpetaDeObra((obra && obra.nombre) || 'Sin obra');
+        const sub = entry.tipo === 'foto' ? 'Fotos' : null;
+        const destino = await carpetaDeObra((obra && obra.nombre) || 'Sin obra', sub);
         const nombre = nombreLegible(entry, null);
         try { await renombrarMover(f.id, nombre, destino, f.carpetaId); } catch (_) { /* opcional */ }
       }
