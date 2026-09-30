@@ -22,7 +22,7 @@ let visibles = 60;
 let obraActual = null;
 const urlCache = new Map();
 
-const AJUSTES_DEFECTO = { comprimir: true, maxDim: 1920, calidad: 0.82 };
+const AJUSTES_DEFECTO = { comprimir: true, maxDim: 1920, calidad: 0.82, autoSync: true, soloWifi: true };
 let ajustes = { ...AJUSTES_DEFECTO };
 async function cargarAjustes() {
   const m = await db.get('meta', 'ajustes');
@@ -749,31 +749,96 @@ async function marcarBorrado(id, tipo) {
   await db.put('meta', m);
 }
 
-async function sincronizarDrive() {
-  if (sincronizando) { alert('Ya hay una sincronización en curso.'); return; }
+async function sincronizarDrive(opts = {}) {
+  const silencioso = !!opts.silencioso;
+  if (sincronizando) {
+    if (!silencioso) alert('Ya hay una sincronización en curso.');
+    return;
+  }
   if (!drive.configurado()) {
-    alert('Falta el Client ID de Google.\n\nHay que rellenar CLIENT_ID en js/config.js.');
+    if (!silencioso) alert('Falta el Client ID de Google.\n\nHay que rellenar CLIENT_ID en js/config.js.');
     return;
   }
   sincronizando = true;
-  closeModal();
+  if (!silencioso) closeModal();
   const tituloPrevio = pageTitle.textContent;
-  pageTitle.textContent = 'Conectando con Drive…';
+  if (!silencioso) pageTitle.textContent = 'Conectando con Drive…';
+  else if (syncBtn) syncBtn.title = 'Sincronizando…';
   try {
-    const r = await drive.sincronizar((msg) => { pageTitle.textContent = msg; });
+    const r = await drive.sincronizar((msg) => {
+      if (!silencioso) pageTitle.textContent = msg;
+      else if (syncBtn) syncBtn.title = msg;
+    });
     await reload();
     route();
-    const extra = r.movidos ? `\nArchivos reorganizados: ${r.movidos}` : '';
-    alert(`Sincronizado con Drive.\n\nObras: ${r.obras}\nEntradas: ${r.entries}\nArchivos subidos: ${r.subidos}\nArchivos bajados: ${r.bajados}${extra}`);
+    if (!silencioso) {
+      const extra = r.movidos ? `\nArchivos reorganizados: ${r.movidos}` : '';
+      alert(`Sincronizado con Drive.\n\nObras: ${r.obras}\nEntradas: ${r.entries}\nArchivos subidos: ${r.subidos}\nArchivos bajados: ${r.bajados}${extra}`);
+    }
   } catch (err) {
     console.error(err);
-    closeModal();
-    pageTitle.textContent = tituloPrevio;
-    route();
-    alert('No se pudo sincronizar:\n\n' + err.message);
+    if (!silencioso) {
+      closeModal();
+      pageTitle.textContent = tituloPrevio;
+      route();
+      alert('No se pudo sincronizar:\n\n' + err.message);
+    }
   } finally {
     sincronizando = false;
+    refrescarBotonSync();
   }
+}
+
+/* ---------------------- sincronización automática ---------------------- */
+let syncTimer = null;
+
+function enWifi() {
+  const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  if (!c || !c.type) return true;               // no se puede saber: permitimos
+  return c.type === 'wifi' || c.type === 'ethernet';
+}
+
+function minutosDesde(iso) {
+  if (!iso) return Infinity;
+  const t = Date.parse(iso);
+  return isNaN(t) ? Infinity : (Date.now() - t) / 60000;
+}
+
+// Programa una sincronización con retardo (agrupa cambios seguidos).
+function programarSync(retraso) {
+  if (!ajustes.autoSync || !drive.configurado()) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(sincronizarAuto, retraso === undefined ? 25000 : retraso);
+}
+
+async function sincronizarAuto() {
+  if (sincronizando || !ajustes.autoSync || !drive.configurado()) return;
+  if (!navigator.onLine) return;
+  if (ajustes.soloWifi && !enWifi()) return;
+  await sincronizarDrive({ silencioso: true });
+}
+
+function autoSyncDialog() {
+  openModal(`
+    <h2>Sincronización automática</h2>
+    <p class="hint">Además del botón ☁, Chronos puede sincronizar sola al abrir la app, al recuperar la conexión y unos segundos después de cada cambio.</p>
+    <div class="menu-list">
+      <button data-auto="1">${ajustes.autoSync ? '✅ ' : ''}Sincronizar automáticamente</button>
+      <button data-wifi="1">${ajustes.soloWifi ? '✅ ' : ''}Solo con WiFi <span class="hint">(no gastar datos móviles)</span></button>
+    </div>
+    <div class="modalactions"><button class="btn" id="a_close">Cerrar</button></div>`, (m) => {
+    m.querySelector('[data-auto]').onclick = async () => {
+      await guardarAjustes({ autoSync: !ajustes.autoSync });
+      closeModal();
+      autoSyncDialog();
+    };
+    m.querySelector('[data-wifi]').onclick = async () => {
+      await guardarAjustes({ soloWifi: !ajustes.soloWifi });
+      closeModal();
+      autoSyncDialog();
+    };
+    m.querySelector('#a_close').onclick = closeModal;
+  });
 }
 
 async function refrescarBotonSync() {
@@ -792,6 +857,7 @@ function settingsDialog() {
     <div class="menu-list">
       <button id="s_notif">🔔 Activar notificaciones</button>
       <button id="s_calidad">🖼️ Calidad de las fotos</button>
+      <button id="s_auto">🔁 Sincronización automática</button>
       <button id="s_export">⬇️ Exportar copia de seguridad (.json)</button>
       <button id="s_import">⬆️ Importar copia de seguridad</button>
       <button id="s_migracion">📥 Importar migración de AppSheet (1 clic)</button>
@@ -809,6 +875,7 @@ function settingsDialog() {
     m.querySelector('#s_import').onclick = importBackup;
     m.querySelector('#s_migracion').onclick = importarDesdeServidor;
     m.querySelector('#s_calidad').onclick = calidadDialog;
+    m.querySelector('#s_auto').onclick = autoSyncDialog;
     m.querySelector('#s_drive').onclick = sincronizarDrive;
   });
 }
@@ -1017,6 +1084,10 @@ async function init() {
   await reload();
   route();
   refrescarBotonSync();
+  if (drive.configurado()) {
+    const u = await drive.ultimaSync();
+    if (minutosDesde(u) > 5) programarSync(4000);
+  }
   checkReminders();
   setInterval(checkReminders, 60000);
 }

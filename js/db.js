@@ -24,6 +24,11 @@ export function openDB() {
   return _dbp;
 }
 
+// Aviso de escritura: permite a la app programar una sincronización al cambiar datos.
+let _onWrite = null;
+export function onWrite(cb) { _onWrite = cb; }
+function avisarEscritura() { if (_onWrite) { try { _onWrite(); } catch (_) { /* no romper la escritura */ } } }
+
 const reqP = (r) => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
 const txDone = (t) => new Promise((res, rej) => { t.oncomplete = () => res(); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); });
 
@@ -39,17 +44,20 @@ export async function put(store, value) {
   const d = await openDB();
   const t = d.transaction(store, 'readwrite');
   t.objectStore(store).put(value);
-  return txDone(t);
+  await txDone(t);
+  avisarEscritura();
 }
 export async function del(store, key) {
   const d = await openDB();
   const t = d.transaction(store, 'readwrite');
   t.objectStore(store).delete(key);
-  return txDone(t);
+  await txDone(t);
+  avisarEscritura();
 }
 export async function clear(store) {
   const d = await openDB();
   const t = d.transaction(store, 'readwrite');
   t.objectStore(store).clear();
-  return txDone(t);
+  await txDone(t);
+  avisarEscritura();
 }
