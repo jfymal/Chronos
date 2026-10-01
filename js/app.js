@@ -23,7 +23,7 @@ let obraActual = null;
 let seleccionInbox = new Set();
 const urlCache = new Map();
 
-const AJUSTES_DEFECTO = { comprimir: true, maxDim: 1920, calidad: 0.82, autoSync: true, soloWifi: true };
+const AJUSTES_DEFECTO = { comprimir: true, maxDim: 1920, calidad: 0.82, autoSync: true, soloWifi: true, horaRecordatorio: '08:00' };
 let ajustes = { ...AJUSTES_DEFECTO };
 async function cargarAjustes() {
   const m = await db.get('meta', 'ajustes');
@@ -274,27 +274,112 @@ function linkDialog(obraId) {
   });
 }
 
+/* ---------------------- calendario ---------------------- */
+const DIAS_SEMANA = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
+const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+const HORA_DEFECTO = '08:00';
+
+const claveDia = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+function fechaDeClave(k) {
+  const [y, m, d] = String(k).split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+function textoFecha(d) {
+  const s = d.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// marcas: Map('YYYY-MM-DD' -> {n, overdue, hecho})  |  seleccion: Date
+function htmlCalendario(mes, marcas, seleccion) {
+  const y = mes.getFullYear();
+  const mo = mes.getMonth();
+  const offset = (new Date(y, mo, 1).getDay() + 6) % 7; // lunes = 0
+  const dias = new Date(y, mo + 1, 0).getDate();
+  const hoy = new Date();
+  let h = `<div class="cal-top">
+    <button class="iconbtn" type="button" data-mes="-1" aria-label="Mes anterior">&#8249;</button>
+    <b>${MESES[mo]} ${y}</b>
+    <button class="iconbtn" type="button" data-mes="1" aria-label="Mes siguiente">&#8250;</button>
+  </div><div class="cal-grid">`;
+  for (const d of DIAS_SEMANA) h += `<div class="cal-dow">${d}</div>`;
+  for (let i = 0; i < offset; i++) h += '<div></div>';
+  for (let d = 1; d <= dias; d++) {
+    const f = new Date(y, mo, d);
+    const k = claveDia(f);
+    const m = marcas && marcas.get ? marcas.get(k) : null;
+    const cls = ['cal-day'];
+    if (seleccion && claveDia(seleccion) === k) cls.push('sel');
+    if (claveDia(hoy) === k) cls.push('hoy');
+    if (m) cls.push(m.overdue && !m.hecho ? 'con-over' : 'con');
+    h += `<button type="button" class="${cls.join(' ')}" data-dia="${k}">${d}${m && m.n > 1 ? `<span class="cal-dot">${m.n}</span>` : (m ? '<span class="cal-dot">•</span>' : '')}</button>`;
+  }
+  h += '</div>';
+  return h;
+}
+
 function reminderDialog(id) {
   const e = entries.find((x) => x.id === id);
   if (!e) return;
+  let sel = e.recordatorio ? new Date(e.recordatorio) : null;
+  let hora = sel ? `${pad(sel.getHours())}:${pad(sel.getMinutes())}` : (ajustes.horaRecordatorio || HORA_DEFECTO);
+  let mes = sel ? new Date(sel) : new Date();
+  if (!sel) mes.setDate(mes.getDate() + 1); // por defecto, mañana
+
   openModal(`
     <h2>Recordatorio</h2>
-    <p class="hint">${esc(entryLabel(e)).slice(0, 120)}</p>
-    <label>Fecha y hora<input type="datetime-local" id="r_in" value="${e.recordatorio ? toLocalInput(e.recordatorio) : ''}"></label>
+    <p class="hint">${esc(String(entryLabel(e)).slice(0, 100))}</p>
+    <div id="r_cal"></div>
+    <div id="r_resumen" class="resumen"></div>
+    <label>Hora <input type="time" id="r_hora" value="${hora}"></label>
+    <div class="rowbtns">
+      <button class="btn" type="button" data-quick="1">Mañana</button>
+      <button class="btn" type="button" data-quick="3">En 3 días</button>
+      <button class="btn" type="button" data-quick="7">En 1 semana</button>
+    </div>
     <div class="modalactions">
       <button class="btn" id="r_clear">Quitar</button>
+      <button class="btn" id="r_cancel">Cancelar</button>
       <button class="btn primary" id="r_save">Guardar</button>
     </div>`, (m) => {
-    m.querySelector('#r_save').onclick = async () => {
-      const v = m.querySelector('#r_in').value;
-      e.recordatorio = v ? new Date(v).toISOString() : null;
-      e.notificado = false;
-      e.actualizado = new Date().toISOString();
+    const cont = m.querySelector('#r_cal');
+    const resumen = m.querySelector('#r_resumen');
+    const horaInp = m.querySelector('#r_hora');
+    const pintar = () => {
+      cont.innerHTML = htmlCalendario(mes, null, sel);
+      cont.querySelectorAll('[data-mes]').forEach((b) => {
+        b.onclick = () => { mes = new Date(mes.getFullYear(), mes.getMonth() + Number(b.dataset.mes), 1); pintar(); };
+      });
+      cont.querySelectorAll('[data-dia]').forEach((b) => {
+        b.onclick = () => { sel = fechaDeClave(b.dataset.dia); pintar(); };
+      });
+      resumen.innerHTML = sel
+        ? `📅 <b>${textoFecha(sel)}</b> a las ${esc(horaInp.value || HORA_DEFECTO)}`
+        : 'Elige un día en el calendario';
+    };
+    horaInp.oninput = pintar;
+    pintar();
+    m.querySelectorAll('[data-quick]').forEach((b) => {
+      b.onclick = () => {
+        const f = new Date();
+        f.setDate(f.getDate() + Number(b.dataset.quick));
+        f.setHours(8, 0, 0, 0);
+        sel = f; mes = new Date(f); horaInp.value = HORA_DEFECTO; pintar();
+      };
+    });
+    m.querySelector('#r_cancel').onclick = closeModal;
+    m.querySelector('#r_clear').onclick = async () => {
+      e.recordatorio = null; e.notificado = false; e.actualizado = new Date().toISOString();
       await db.put('entries', e); await reload(); closeModal(); route();
     };
-    m.querySelector('#r_clear').onclick = async () => {
-      e.recordatorio = null; e.notificado = false;
+    m.querySelector('#r_save').onclick = async () => {
+      if (!sel) { alert('Elige un día en el calendario.'); return; }
+      const [hh, mm] = String(horaInp.value || HORA_DEFECTO).split(':').map(Number);
+      const f = new Date(sel);
+      f.setHours(hh || 0, mm || 0, 0, 0);
+      e.recordatorio = f.toISOString();
+      e.notificado = false;
       e.actualizado = new Date().toISOString();
+      await guardarAjustes({ horaRecordatorio: horaInp.value || HORA_DEFECTO });
       await db.put('entries', e); await reload(); closeModal(); route();
     };
   });
@@ -446,19 +531,39 @@ async function renderObra(id) {
   if (more) more.onclick = () => { visibles += 120; renderObra(id); };
 }
 
+let calMes = new Date();
+let calDiaSel = null;
+
 async function renderRecordatorios() {
   pageTitle.textContent = 'Recordatorios';
   backBtn.hidden = true;
   fab.hidden = true;
   setActiveTab('#/recordatorios');
 
-  const list = entries.filter((e) => e.recordatorio).sort((a, b) => String(a.recordatorio).localeCompare(String(b.recordatorio)));
+  const list = entries.filter((e) => e.recordatorio);
   if (!list.length) {
     view.innerHTML = `<div class="empty"><h2>Sin recordatorios</h2><p>Pon un recordatorio a cualquier foto, comentario, PDF o enlace desde su obra y aparecerá aquí.</p></div>`;
     return;
   }
+
+  // marcas del calendario
   const now = Date.now();
-  const rows = list.map((e) => {
+  const marcas = new Map();
+  for (const e of list) {
+    const k = claveDia(new Date(e.recordatorio));
+    const m = marcas.get(k) || { n: 0, overdue: false, hecho: true };
+    m.n++;
+    if (!e.completado) {
+      m.hecho = false;
+      if (new Date(e.recordatorio).getTime() < now) m.overdue = true;
+    }
+    marcas.set(k, m);
+  }
+
+  let filtradas = [...list].sort((a, b) => String(a.recordatorio).localeCompare(String(b.recordatorio)));
+  if (calDiaSel) filtradas = filtradas.filter((e) => claveDia(new Date(e.recordatorio)) === calDiaSel);
+
+  const rows = filtradas.map((e) => {
     const o = obras.find((x) => x.id === e.obraId);
     const over = !e.completado && new Date(e.recordatorio).getTime() < now;
     return `<div class="rem ${e.completado ? 'done' : (over ? 'over' : '')}">
@@ -470,8 +575,22 @@ async function renderRecordatorios() {
       <button class="minibtn" data-act="toggle-done" data-id="${e.id}">${e.completado ? 'Reabrir' : 'Hecho'}</button>
     </div>`;
   }).join('');
-  view.innerHTML = `<div class="rems">${rows}</div>
-    <p class="hint" style="margin-top:16px">Nota: las notificaciones del navegador solo avisan con la app abierta. En el APK de Android sonará aunque esté cerrada.</p>`;
+
+  view.innerHTML = `
+    <div class="cal-wrap">${htmlCalendario(calMes, marcas, calDiaSel ? fechaDeClave(calDiaSel) : null)}</div>
+    ${calDiaSel ? `<div class="calselec"><b>${textoFecha(fechaDeClave(calDiaSel))}</b><div class="spacer"></div><button class="minibtn" id="cal_todos">ver todos</button></div>` : ''}
+    <div class="rems">${rows || '<div class="hint" style="padding:12px">Ningún recordatorio este día.</div>'}</div>
+    <p class="hint" style="margin-top:16px">Los días con recordatorio salen marcados; en rojo, los que ya han vencido. Toca un día para ver solo los suyos.</p>`;
+
+  const cont = view.querySelector('.cal-wrap');
+  cont.querySelectorAll('[data-mes]').forEach((b) => {
+    b.onclick = () => { calMes = new Date(calMes.getFullYear(), calMes.getMonth() + Number(b.dataset.mes), 1); renderRecordatorios(); };
+  });
+  cont.querySelectorAll('[data-dia]').forEach((b) => {
+    b.onclick = () => { calDiaSel = (calDiaSel === b.dataset.dia) ? null : b.dataset.dia; renderRecordatorios(); };
+  });
+  const todos = view.querySelector('#cal_todos');
+  if (todos) todos.onclick = () => { calDiaSel = null; renderRecordatorios(); };
 }
 
 // selector de obra con buscador
