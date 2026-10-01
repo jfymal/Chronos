@@ -1035,6 +1035,7 @@ async function sincronizarDrive(opts = {}) {
       if (!silencioso) pageTitle.textContent = msg;
       else if (syncBtn) syncBtn.title = msg;
     }, { bajoDemanda: ajustes.bajoDemanda });
+    sucio = false;
     await reload();
     route();
     if (!silencioso) {
@@ -1133,7 +1134,8 @@ async function refrescarBotonSync() {
   syncBtn.hidden = !drive.configurado();
   if (drive.configurado()) {
     const u = await drive.ultimaSync();
-    syncBtn.title = u ? 'Sincronizado: ' + fmt(u) : 'Sincronizar con Drive';
+    syncBtn.title = sucio ? 'Hay cambios sin subir — pulsa para sincronizar' : (u ? 'Sincronizado: ' + fmt(u) : 'Sincronizar con Drive');
+    syncBtn.textContent = sucio ? '☁︎' : '☁';
   }
 }
 
@@ -1370,12 +1372,21 @@ window.addEventListener('hashchange', route);
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
 
 // Sincronización automática: al cambiar datos, al recuperar red y al volver a la app.
-db.onWrite(() => programarSync());
+let sucio = false;   // hay cambios locales que aún no han subido a Drive
+db.onWrite(() => { sucio = true; programarSync(); });
 window.addEventListener('online', () => programarSync(2000));
 document.addEventListener('visibilitychange', async () => {
-  if (document.visibilityState !== 'visible') return;
+  if (document.visibilityState === 'hidden') {
+    if (sucio) sincronizarAuto();          // última oportunidad antes de perder el foco
+    return;
+  }
   const u = await drive.ultimaSync();
   if (minutosDesde(u) > 10) programarSync(1500);
+});
+
+// Aviso si se intenta cerrar con cambios sin sincronizar (clave en incógnito).
+window.addEventListener('beforeunload', (e) => {
+  if (sucio) { e.preventDefault(); e.returnValue = ''; }
 });
 
 /* ============================ arranque ============================ */
