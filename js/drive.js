@@ -251,6 +251,20 @@ async function renombrarMover(fileId, nombre, destinoId, origenId) {
   });
 }
 
+// Manda a la papelera de Drive (recuperable 30 días). No borra definitivamente.
+async function aPapelera(fileId) {
+  try {
+    await api(`${API}/files/${fileId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trashed: true }),
+    });
+    return true;
+  } catch (_) {
+    return false;   // se reintentará en la próxima sincronización
+  }
+}
+
 async function descargar(fileId) {
   const r = await api(`${API}/files/${fileId}?alt=media`);
   return r.blob();
@@ -341,10 +355,12 @@ export async function sincronizar(onProgreso = () => {}) {
   for (const e of entriesM.values()) await db.put('entries', e);
   for (const b of borradosM) {
     if (b.tipo === 'obra' && !obrasM.has(b.id)) await db.del('obras', b.id);
-    if (b.tipo === 'entry' && !entriesM.has(b.id)) await db.del('entries', b.id);
+    if (b.tipo === 'entry' && !entriesM.has(b.id)) {
+      const local = await db.get('entries', b.id);
+      if (local && local.blobId) await db.del('blobs', local.blobId);
+      await db.del('entries', b.id);
+    }
   }
-  await db.put('meta', { k: 'borrados', lista: borradosM });
-
   // --- archivos ---
   onProgreso('Revisando archivos…');
   const arbol = await listarArbol();
@@ -464,6 +480,53 @@ export async function sincronizar(onProgreso = () => {}) {
     }
   }
 
+  // --- lo borrado en la app se manda a la papelera de Drive ---
+  const remotoEntries = new Map(((remoto && remoto.entries) || []).map((e) => [e.id, e]));
+  const remotoObras = new Map(((remoto && remoto.obras) || []).map((o) => [o.id, o]));
+  const remotoBlobsMeta = new Map(((remoto && remoto.blobs) || []).map((b) => [b.id, b]));
+
+  const pendientes = [];
+  for (const b of borradosM) {
+    if (b.drive) continue;                       // ya limpiado
+    const ids = [];
+    if (b.tipo === 'entry') {
+      const e = remotoEntries.get(b.id);
+      const m = e && e.blobId ? remotoBlobsMeta.get(e.blobId) : null;
+      if (m && m.file) ids.push(m.file);
+    } else if (b.tipo === 'obra') {
+      const o = remotoObras.get(b.id);
+      if (o) {
+        const q = `name='${limpiarNombre(o.nombre).replace(/'/g, "\\'")}' and mimeType='${MIME_CARPETA}' and trashed=false and '${carpetaId}' in parents`;
+        const fs = await listar(q);
+        for (const f of fs) ids.push(f.id);      // la carpeta arrastra su contenido
+      }
+      for (const e of ((remoto && remoto.entries) || [])) {
+        if (e.obraId === b.id && e.blobId) {
+          const m = remotoBlobsMeta.get(e.blobId);
+          if (m && m.file) ids.push(m.file);
+        }
+      }
+    }
+    if (ids.length) pendientes.push({ b, ids: [...new Set(ids)] });
+  }
+
+  let aPapeleraN = 0;
+  if (pendientes.length) {
+    const total = pendientes.reduce((n, x) => n + x.ids.length, 0);
+    let hechosP = 0;
+    await enParalelo(pendientes, SUBIDA_PARALELA, async (x) => {
+      let ok = true;
+      for (const id of x.ids) {
+        if (!(await aPapelera(id))) ok = false;
+        hechosP++;
+        onProgreso(`Limpiando Drive… ${hechosP}/${total}`);
+      }
+      if (ok) { x.b.drive = true; aPapeleraN += x.ids.length; }
+    });
+  }
+
+  await db.put('meta', { k: 'borrados', lista: borradosM });
+
   onProgreso('Guardando índice en Drive…');
   const salida = {
     app: 'obras',
@@ -485,6 +548,7 @@ export async function sincronizar(onProgreso = () => {}) {
     subidos: subir.length,
     bajados: bajar.length,
     movidos: mover.length,
+    papelera: aPapeleraN,
   };
 }
 

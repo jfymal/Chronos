@@ -988,7 +988,8 @@ async function sincronizarDrive(opts = {}) {
     route();
     if (!silencioso) {
       const extra = r.movidos ? `\nArchivos reorganizados: ${r.movidos}` : '';
-      alert(`Sincronizado con Drive.\n\nObras: ${r.obras}\nEntradas: ${r.entries}\nArchivos subidos: ${r.subidos}\nArchivos bajados: ${r.bajados}${extra}`);
+      const pap = r.papelera ? `\nEnviados a la papelera de Drive: ${r.papelera}` : '';
+      alert(`Sincronizado con Drive.\n\nObras: ${r.obras}\nEntradas: ${r.entries}\nArchivos subidos: ${r.subidos}\nArchivos bajados: ${r.bajados}${extra}${pap}`);
     }
   } catch (err) {
     console.error(err);
