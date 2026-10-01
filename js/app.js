@@ -526,7 +526,7 @@ async function entryHtml(e, selMode) {
     const nom = e.nombre || 'documento.pdf';
     body = u
       ? `<div class="pdfrow">
-           <a class="filelink" href="${u}" target="_blank" rel="noopener">📎 ${esc(nom)}</a>
+           <button class="btn" data-act="abrir-pdf" data-id="${e.id}">📎 ${esc(nom)}</button>
            <button class="minibtn" data-act="ver-pdf" data-id="${e.id}">ver aquí</button>
            <a class="minibtn" href="${u}" download="${esc(nom)}">descargar</a>
          </div>
@@ -549,6 +549,7 @@ async function entryHtml(e, selMode) {
       <div class="entrymeta">
         <span>${iconFor(e.tipo)} ${fmt(e.creado)}</span>${chips}${remPill}
         ${e.tipo === 'foto' ? `<button class="minibtn" data-act="anotar" data-id="${e.id}">anotar</button>` : ''}
+        <button class="minibtn" data-act="fijar" data-id="${e.id}">${e.fijado ? '📌 quitar' : '📌 fijar'}</button>
         <button class="minibtn" data-act="recordatorio" data-id="${e.id}">${e.recordatorio ? 'editar recordatorio' : 'poner recordatorio'}</button>
         <button class="minibtn danger" data-act="del" data-id="${e.id}">borrar</button>
       </div>
@@ -567,7 +568,10 @@ async function renderObra(id) {
   const es = entriesOf(id);
   if (obraActual !== id) { obraActual = id; visibles = 60; modoSeleccion = false; seleccionObra.clear(); }
   seleccionObra = new Set([...seleccionObra].filter((x) => es.some((e) => e.id === x)));
-  const mostradas = es.slice(0, visibles);
+  const fijadas = es.filter((e) => e.fijado);
+  const resto = es.filter((e) => !e.fijado);
+  const mostradas = resto.slice(0, visibles);
+  const bloquesFijas = await Promise.all(fijadas.map((e) => entryHtml(e, modoSeleccion)));
   const blocks = await Promise.all(mostradas.map((e) => entryHtml(e, modoSeleccion)));
   view.innerHTML = `
     <section class="obrahead">
@@ -583,8 +587,9 @@ async function renderObra(id) {
         <button class="btn" id="b_share">Compartir resumen</button>
       </div>
     </section>
+    ${fijadas.length ? `<div class="fijados"><div class="fijados-tit">📌 Fijado</div><div class="entries">${bloquesFijas.join('')}</div></div>` : ''}
     ${es.length ? `<div class="entries">${blocks.join('')}</div>` : `<div class="empty"><p>Aún no hay nada en esta obra. Usa <b>📷 Foto</b> o <b>💬 Comentario</b> aquí abajo.</p></div>`}
-    ${es.length > visibles ? `<div style="text-align:center;margin-top:14px"><button class="btn" id="b_more">Mostrar más (${es.length - visibles} restantes)</button></div>` : ''}
+    ${resto.length > visibles ? `<div style="text-align:center;margin-top:14px"><button class="btn" id="b_more">Mostrar más (${resto.length - visibles} restantes)</button></div>` : ''}
     ${modoSeleccion ? `<div class="obrabar sel">
       <span class="obcup"><b id="ob_count">${seleccionObra.size}</b> seleccionada(s)</span>
       <button class="btn primary" id="ob_mover">Mover a…</button>
@@ -858,7 +863,8 @@ async function openEditor(obraId, baseEntry) {
   let base = null, baseUrl = null;
   if (baseEntry && baseEntry.blobId) {
     const rec = await db.get('blobs', baseEntry.blobId);
-    if (rec && rec.blob) {
+    const tipo = String((rec && rec.tipo) || (rec && rec.blob && rec.blob.type) || '');
+    if (rec && rec.blob && tipo.startsWith('image/')) {
       try { const r = await blobToImage(rec.blob); base = r.img; baseUrl = r.url; } catch (_) { /* seguimos en blanco */ }
     }
   }
@@ -872,12 +878,15 @@ async function openEditor(obraId, baseEntry) {
   } else if (window.innerHeight > window.innerWidth) { W = 1240; H = 1754; }
   else { W = 1754; H = 1240; }
 
+  const paginas = [{ strokes: [] }];
+  let pag = 0;
+
   const ov = document.createElement('div');
   ov.className = 'editor';
   ov.innerHTML = `
     <div class="ed-top">
       <button class="btn" id="ed-cancel">Cancelar</button>
-      <span class="ed-title">${base ? 'Anotar foto' : 'Lienzo en blanco'}</span>
+      <span class="ed-title">${base ? 'Anotar foto' : 'Lienzo'}</span>
       <button class="btn primary" id="ed-save">Guardar</button>
     </div>
     <div class="ed-tools">
@@ -887,46 +896,62 @@ async function openEditor(obraId, baseEntry) {
       <span class="ed-sep"></span>
       <button class="minibtn" id="ed-erase">🧽 borrador</button>
       <button class="minibtn" id="ed-undo">↶ deshacer</button>
-      <button class="minibtn danger" id="ed-clear">borrar todo</button>
+      <button class="minibtn danger" id="ed-clear">borrar página</button>
     </div>
-    <div class="ed-canvas-wrap"><canvas id="ed-canvas" width="${W}" height="${H}"></canvas></div>`;
+    <div class="ed-canvas-wrap"><canvas id="ed-canvas" width="${W}" height="${H}"></canvas></div>
+    <div class="ed-pages">
+      <button class="btn" id="ed-prev" aria-label="Página anterior">&#8249;</button>
+      <span id="ed-numpag">1 / 1</span>
+      <button class="btn" id="ed-next" aria-label="Página siguiente">&#8250;</button>
+      <div class="spacer"></div>
+      <button class="btn" id="ed-addpag">+ página</button>
+      <button class="btn danger" id="ed-delpag" hidden>quitar página</button>
+    </div>`;
   document.body.appendChild(ov);
   document.body.classList.add('editing');
 
   const canvas = ov.querySelector('#ed-canvas');
   const ctx = canvas.getContext('2d');
   let color = COLORES[0], grosor = GROSORES[1], erase = false;
-  let strokes = [], cur = null, drawing = false;
+  let cur = null, drawing = false;
   const activePen = new Set();
 
-  function paintBase() {
-    ctx.clearRect(0, 0, W, H);
-    if (base) ctx.drawImage(base, 0, 0, W, H);
-    else { ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H); }
+  function pintaFondo(c, i) {
+    c.clearRect(0, 0, W, H);
+    if (base && i === 0) c.drawImage(base, 0, 0, W, H);
+    else { c.fillStyle = '#ffffff'; c.fillRect(0, 0, W, H); }
   }
-  function drawDot(p, c) {
-    ctx.fillStyle = c;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, Math.max(0.6, p.w / 2), 0, Math.PI * 2);
-    ctx.fill();
+  function punto(c, p, col) {
+    c.fillStyle = col;
+    c.beginPath();
+    c.arc(p.x, p.y, Math.max(0.6, p.w / 2), 0, Math.PI * 2);
+    c.fill();
   }
-  function drawSeg(a, b, c) {
-    ctx.strokeStyle = c;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.lineWidth = Math.max(0.6, (a.w + b.w) / 2);
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
-    ctx.stroke();
+  function trazo(c, a, b, col) {
+    c.strokeStyle = col;
+    c.lineCap = 'round';
+    c.lineJoin = 'round';
+    c.lineWidth = Math.max(0.6, (a.w + b.w) / 2);
+    c.beginPath();
+    c.moveTo(a.x, a.y);
+    c.lineTo(b.x, b.y);
+    c.stroke();
   }
-  function redraw() {
-    paintBase();
-    for (const s of strokes) {
-      if (s.points.length === 1) drawDot(s.points[0], s.c);
-      for (let i = 1; i < s.points.length; i++) drawSeg(s.points[i - 1], s.points[i], s.c);
+  function dibujarEn(c, i) {
+    pintaFondo(c, i);
+    for (const s of paginas[i].strokes) {
+      if (s.points.length === 1) punto(c, s.points[0], s.c);
+      for (let k = 1; k < s.points.length; k++) trazo(c, s.points[k - 1], s.points[k], s.c);
     }
   }
+  function actualizarBarra() {
+    ov.querySelector('#ed-numpag').textContent = `${pag + 1} / ${paginas.length}`;
+    ov.querySelector('#ed-prev').disabled = pag === 0;
+    ov.querySelector('#ed-next').disabled = pag === paginas.length - 1;
+    ov.querySelector('#ed-delpag').hidden = paginas.length < 2;
+  }
+  function redraw() { dibujarEn(ctx, pag); actualizarBarra(); }
+
   function toCanvas(ev) {
     const r = canvas.getBoundingClientRect();
     const pr = (ev.pressure && ev.pressure > 0.01) ? ev.pressure : 0.5;
@@ -936,42 +961,42 @@ async function openEditor(obraId, baseEntry) {
       w: Math.max(1, grosor * (0.35 + 1.3 * pr)),
     };
   }
-  function eraserRadius() {
+  function radioBorrador() {
     const r = canvas.getBoundingClientRect();
     return Math.max(6, 18 * (W / r.width));
   }
-  function eraseAt(p, rad) {
+  function borrarEn(p, rad) {
     const r2 = rad * rad;
-    const out = [];
-    for (const s of strokes) {
+    const salida = [];
+    for (const s of paginas[pag].strokes) {
       let run = null;
       for (const q of s.points) {
         if ((q.x - p.x) ** 2 + (q.y - p.y) ** 2 > r2) {
-          if (!run) { run = { c: s.c, points: [] }; out.push(run); }
+          if (!run) { run = { c: s.c, points: [] }; salida.push(run); }
           run.points.push(q);
         } else { run = null; }
       }
     }
-    strokes = out;
+    paginas[pag].strokes = salida;
   }
 
   canvas.addEventListener('contextmenu', (ev) => ev.preventDefault());
   canvas.addEventListener('pointerdown', (ev) => {
     if (ev.pointerType === 'pen') activePen.add(ev.pointerId);
-    if (ev.pointerType === 'touch' && activePen.size > 0) return; // rechazo de palma
+    if (ev.pointerType === 'touch' && activePen.size > 0) return;   // rechazo de palma
     ev.preventDefault();
     try { canvas.setPointerCapture(ev.pointerId); } catch (_) { /* opcional */ }
     drawing = true;
-    if (erase) { eraseAt(toCanvas(ev), eraserRadius()); redraw(); return; }
+    if (erase) { borrarEn(toCanvas(ev), radioBorrador()); redraw(); return; }
     cur = { c: color, points: [toCanvas(ev)] };
-    strokes.push(cur);
-    drawDot(cur.points[0], color);
+    paginas[pag].strokes.push(cur);
+    punto(ctx, cur.points[0], color);
   });
   canvas.addEventListener('pointermove', (ev) => {
     if (!drawing) return;
     const evs = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [ev];
     if (erase) {
-      for (const e2 of evs) eraseAt(toCanvas(e2), eraserRadius());
+      for (const e2 of evs) borrarEn(toCanvas(e2), radioBorrador());
       redraw();
       return;
     }
@@ -980,7 +1005,7 @@ async function openEditor(obraId, baseEntry) {
       const p = toCanvas(e2);
       const prev = cur.points[cur.points.length - 1];
       cur.points.push(p);
-      drawSeg(prev, p, cur.c);
+      trazo(ctx, prev, p, cur.c);
     }
   });
   const terminar = (ev) => {
@@ -1007,13 +1032,32 @@ async function openEditor(obraId, baseEntry) {
       b.classList.add('on');
     });
   });
-  ov.querySelector('#ed-erase').addEventListener('click', (b) => {
+  ov.querySelector('#ed-erase').addEventListener('click', (ev) => {
     erase = !erase;
-    b.target.classList.toggle('on', erase);
+    ev.currentTarget.classList.toggle('on', erase);
   });
-  ov.querySelector('#ed-undo').addEventListener('click', () => { strokes.pop(); redraw(); });
+  ov.querySelector('#ed-undo').addEventListener('click', () => { paginas[pag].strokes.pop(); redraw(); });
   ov.querySelector('#ed-clear').addEventListener('click', () => {
-    if (strokes.length && confirm('¿Borrar todo lo dibujado?')) { strokes = []; redraw(); }
+    if (paginas[pag].strokes.length && confirm('¿Borrar lo dibujado en esta página?')) {
+      paginas[pag].strokes = [];
+      redraw();
+    }
+  });
+
+  // --- páginas ---
+  ov.querySelector('#ed-prev').addEventListener('click', () => { if (pag > 0) { pag--; redraw(); } });
+  ov.querySelector('#ed-next').addEventListener('click', () => { if (pag < paginas.length - 1) { pag++; redraw(); } });
+  ov.querySelector('#ed-addpag').addEventListener('click', () => {
+    paginas.push({ strokes: [] });
+    pag = paginas.length - 1;
+    redraw();
+  });
+  ov.querySelector('#ed-delpag').addEventListener('click', () => {
+    if (paginas.length < 2) return;
+    if (!confirm('¿Quitar esta página?')) return;
+    paginas.splice(pag, 1);
+    if (pag >= paginas.length) pag = paginas.length - 1;
+    redraw();
   });
 
   function cerrar() {
@@ -1022,18 +1066,55 @@ async function openEditor(obraId, baseEntry) {
     document.body.classList.remove('editing');
   }
   ov.querySelector('#ed-cancel').addEventListener('click', cerrar);
+
   ov.querySelector('#ed-save').addEventListener('click', async () => {
     const tipo = base ? 'image/jpeg' : 'image/png';
-    const blob = await new Promise((res) => canvas.toBlob(res, tipo, tipo === 'image/jpeg' ? (ajustes.calidad || 0.82) : undefined));
-    if (!blob) { alert('No se pudo generar la imagen.'); return; }
-    const blobId = uid();
+    const calidad = tipo === 'image/jpeg' ? (ajustes.calidad || 0.82) : undefined;
+    const salida = [];
+    for (let i = 0; i < paginas.length; i++) {
+      const vacia = paginas[i].strokes.length === 0 && !(base && i === 0);
+      if (vacia && paginas.length > 1) continue;          // no guardamos páginas en blanco
+      const c = document.createElement('canvas');
+      c.width = W; c.height = H;
+      dibujarEn(c.getContext('2d'), i);
+      const blob = await new Promise((res) => c.toBlob(res, tipo, calidad));
+      if (blob) salida.push(blob);
+    }
+    if (!salida.length) { alert('No has dibujado nada.'); return; }
+
     const baseNombre = (baseEntry && baseEntry.nombre ? baseEntry.nombre.replace(/\.[^.]+$/, '') : 'Lienzo');
-    await db.put('blobs', { id: blobId, blob, nombre: base ? 'anotacion.jpg' : 'lienzo.png', tipo });
-    await db.put('entries', {
-      id: uid(), obraId, tipo: 'foto', blobId,
-      nombre: baseNombre + ' (anotado)', texto: '', creado: new Date().toISOString(),
-      recordatorio: null, notificado: false, completado: false,
-    });
+
+    if (baseEntry) {
+      // SUSTITUIR: la misma entrada pasa a ser la versión nueva. No se duplica.
+      const viejo = baseEntry.blobId;
+      const blobId = uid();
+      await db.put('blobs', { id: blobId, blob: salida[0], nombre: base ? 'anotacion.jpg' : 'lienzo.png', tipo });
+      baseEntry.blobId = blobId;
+      baseEntry.actualizado = new Date().toISOString();
+      await db.put('entries', baseEntry);
+      if (viejo && viejo !== blobId) {
+        await db.del('blobs', viejo);
+        await marcarBorrado(viejo, 'blob');   // que Drive mande el archivo viejo a la papelera
+      }
+      for (let k = 1; k < salida.length; k++) {
+        const bid = uid();
+        await db.put('blobs', { id: bid, blob: salida[k], nombre: 'pagina.png', tipo });
+        await db.put('entries', {
+          id: uid(), obraId, tipo: 'foto', blobId: bid, nombre: `${baseNombre} pág ${k + 1}`,
+          texto: '', creado: new Date().toISOString(), recordatorio: null, notificado: false, completado: false,
+        });
+      }
+    } else {
+      for (let k = 0; k < salida.length; k++) {
+        const bid = uid();
+        await db.put('blobs', { id: bid, blob: salida[k], nombre: 'lienzo.png', tipo });
+        await db.put('entries', {
+          id: uid(), obraId, tipo: 'foto', blobId: bid,
+          nombre: salida.length > 1 ? `Lienzo pág ${k + 1}` : 'Lienzo',
+          texto: '', creado: new Date().toISOString(), recordatorio: null, notificado: false, completado: false,
+        });
+      }
+    }
     cerrar();
     await reload();
     route();
@@ -1513,6 +1594,25 @@ view.addEventListener('click', async (ev) => {
     box.innerHTML = `<iframe src="${u}" title="PDF" style="width:100%;height:75vh;border:1px solid var(--line);border-radius:10px;background:#fff"></iframe>`;
     box.hidden = false;
     btn.textContent = 'ocultar';
+    return;
+  }
+  if (act === 'abrir-pdf') {
+    const e = entries.find((x) => x.id === id);
+    const u = e ? await blobUrl(e.blobId) : null;
+    if (!u) { alert('El archivo no está en este dispositivo. Descárgalo primero.'); return; }
+    const w = window.open(u, '_blank', 'noopener');
+    if (!w) alert('El navegador bloqueó la ventana.\n\nPermite las ventanas emergentes para esta web y vuelve a intentarlo.');
+    return;
+  }
+  if (act === 'fijar') {
+    const e = entries.find((x) => x.id === id);
+    if (e) {
+      e.fijado = !e.fijado;
+      e.actualizado = new Date().toISOString();
+      await db.put('entries', e);
+      await reload();
+      route();
+    }
     return;
   }
   if (act === 'bajar') {

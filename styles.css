@@ -160,6 +160,23 @@ a { color: inherit; text-decoration: none; }
   padding: 8px 12px; border-radius: 10px; word-break: break-all;
 }
 .pdfrow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+/* fijados (chincheta) */
+.fijados { margin-bottom: 16px; }
+.fijados-tit {
+  font-size: .8rem; font-weight: 700; color: var(--accent);
+  text-transform: uppercase; letter-spacing: .04em; margin: 0 0 8px;
+}
+.fijados .entry { border-color: var(--accent); }
+
+/* páginas del editor */
+.ed-pages {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+}
+.ed-pages #ed-numpag { font-size: .85rem; color: var(--muted); min-width: 52px; text-align: center; }
+.ed-pages .btn { flex: 0 0 auto; padding: 10px 14px; }
 .pdfbox { margin-top: 10px; }
 .entrymeta { margin-top: 8px; color: var(--muted); font-size: .78rem; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .pill { font-size: .74rem; padding: 2px 8px; border-radius: 999px; background: var(--card2); border: 1px solid var(--line); }

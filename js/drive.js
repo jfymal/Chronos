@@ -504,11 +504,12 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
     for (const e of entriesM.values()) await db.put('entries', e);
     for (const b of borradosM) {
       if (b.tipo === 'obra' && !obrasM.has(b.id)) await db.del('obras', b.id);
-      if (b.tipo === 'entry' && !entriesM.has(b.id)) {
-        const local = await db.get('entries', b.id);
-        if (local && local.blobId) await db.del('blobs', local.blobId);
-        await db.del('entries', b.id);
-      }
+    if (b.tipo === 'entry' && !entriesM.has(b.id)) {
+      const local = await db.get('entries', b.id);
+      if (local && local.blobId) await db.del('blobs', local.blobId);
+      await db.del('entries', b.id);
+    }
+    if (b.tipo === 'blob') await db.del('blobs', b.id);
     }
   } finally {
     db.pausarAvisos(false);
@@ -738,7 +739,11 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
   for (const b of borradosM) {
     if (b.drive) continue;                       // ya limpiado
     const ids = [];
-    if (b.tipo === 'entry') {
+    if (b.tipo === 'blob') {
+      // versión antigua de un archivo reemplazado: su copia de Drive va a la papelera
+      const m = remotoBlobsMeta.get(b.id);
+      if (m && m.file) ids.push(m.file);
+    } else if (b.tipo === 'entry') {
       const e = remotoEntries.get(b.id);
       const m = e && e.blobId ? remotoBlobsMeta.get(e.blobId) : null;
       if (m && m.file) ids.push(m.file);
