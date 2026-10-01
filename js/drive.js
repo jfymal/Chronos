@@ -86,9 +86,36 @@ async function cargarGIS() {
   }
 }
 
+/* --- token en memoria + sessionStorage (evita pedir la cuenta en cada recarga) --- */
+const TOKEN_KEY = 'chronos_token';
+
+function guardarToken() {
+  try { sessionStorage.setItem(TOKEN_KEY, JSON.stringify({ token, expira })); } catch (_) { /* sin sessionStorage */ }
+}
+function olvidarToken() {
+  token = null;
+  expira = 0;
+  try { sessionStorage.removeItem(TOKEN_KEY); } catch (_) { /* nada */ }
+}
+function leerTokenGuardado() {
+  try {
+    const raw = sessionStorage.getItem(TOKEN_KEY);
+    if (!raw) return null;
+    const o = JSON.parse(raw);
+    if (o && o.token && Date.now() < (o.expira || 0) - 60000) {
+      token = o.token;
+      expira = o.expira;
+      return token;
+    }
+  } catch (_) { /* nada */ }
+  return null;
+}
+
 async function pedirToken(interactivo) {
   if (!CLIENT_ID) throw new Error('Falta el Client ID en js/config.js');
   if (token && Date.now() < expira - 60000) return token;
+  if (leerTokenGuardado()) return token;         // reutiliza el de esta sesión de navegador
+
   await cargarGIS();
   if (!cliente) {
     cliente = window.google.accounts.oauth2.initTokenClient({
@@ -98,16 +125,30 @@ async function pedirToken(interactivo) {
     });
   }
   return new Promise((res, rej) => {
+    let hecho = false;
+    // Si Google no contesta (p. ej. popup bloqueado), no dejamos la sincronización colgada.
+    const t = setTimeout(() => {
+      if (hecho) return;
+      hecho = true;
+      rej(new Error(interactivo
+        ? 'Google no respondió. Comprueba que puedes abrir ventanas emergentes.'
+        : 'Hace falta identificarse. Pulsa ☁ para entrar con tu cuenta.'));
+    }, interactivo ? 120000 : 20000);
+
     cliente.callback = (r) => {
+      if (hecho) return;
+      hecho = true;
+      clearTimeout(t);
       if (r.error) return rej(new Error('Google: ' + r.error));
       token = r.access_token;
       expira = Date.now() + (Number(r.expires_in || 3600) * 1000);
+      guardarToken();
       res(token);
     };
     try {
       cliente.requestAccessToken(interactivo ? {} : { prompt: '' });
     } catch (e) {
-      rej(e);
+      if (!hecho) { hecho = true; clearTimeout(t); rej(e); }
     }
   });
 }
@@ -119,8 +160,7 @@ export async function conectar() {
 }
 
 export function desconectar() {
-  token = null;
-  expira = 0;
+  olvidarToken();
   carpetaId = null;
   carpetasObra.clear();
 }
@@ -130,7 +170,7 @@ async function api(url, opts = {}, reintento = true) {
   const t = await pedirToken(false);
   const r = await fetch(url, { ...opts, headers: { Authorization: 'Bearer ' + t, ...(opts.headers || {}) } });
   if (r.status === 401 && reintento) {
-    token = null;
+    olvidarToken();
     return api(url, opts, false);
   }
   if (!r.ok) {
@@ -317,8 +357,9 @@ function enParalelo(items, n, fn) {
 /* ------------------------------- sincronizar ------------------------------- */
 export async function sincronizar(onProgreso = () => {}, opts = {}) {
   const bajoDemanda = !!opts.bajoDemanda;
+  const interactivo = opts.interactivo !== false;
   if (!CLIENT_ID) throw new Error('Falta el Client ID en js/config.js');
-  await pedirToken(true);
+  await pedirToken(interactivo);      // en automático: en silencio, sin sacar el selector de cuentas
   await asegurarCarpeta();
 
   onProgreso('Leyendo estado remoto…');

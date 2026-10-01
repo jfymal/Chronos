@@ -1040,7 +1040,7 @@ async function sincronizarDrive(opts = {}) {
     const r = await drive.sincronizar((msg) => {
       if (!silencioso) pageTitle.textContent = msg;
       else if (syncBtn) syncBtn.title = msg;
-    }, { bajoDemanda: ajustes.bajoDemanda });
+    }, { bajoDemanda: ajustes.bajoDemanda, interactivo: !silencioso });
     await reload();
     route();
     if (!silencioso) {
