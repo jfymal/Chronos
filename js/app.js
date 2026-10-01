@@ -1103,7 +1103,9 @@ async function openEditor(obraId, baseEntry) {
     const esLienzoBase = !!baseEntry && (baseEntry.lienzo === true || /^lienzo\b/i.test(baseEntry.nombre || ''));
     // En una FOTO: se conserva el original y se crea la copia anotada.
     // En un LIENZO o un PDF: se sustituye, solo queda la última versión.
-    const conservarOriginal = !!baseEntry && !esLienzoBase && baseEntry.tipo === 'foto';
+    // Si ya es una copia anotada, se sustituye (evita "(anotado) (anotado)")
+    const yaAnotada = /anotado/i.test((baseEntry && baseEntry.nombre) || '');
+    const conservarOriginal = !!baseEntry && !esLienzoBase && !yaAnotada && baseEntry.tipo === 'foto';
     const tipo = (base && !esLienzoBase) ? 'image/jpeg' : 'image/png';
     const calidad = tipo === 'image/jpeg' ? (ajustes.calidad || 0.82) : undefined;
 
