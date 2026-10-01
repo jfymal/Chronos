@@ -208,6 +208,22 @@ a { color: inherit; text-decoration: none; }
 .menu-list button:hover { background: var(--card2); }
 .hint { color: var(--muted); font-size: .82rem; }
 
+/* recibidos */
+.inboxhead { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+.inboxitem { cursor: pointer; align-items: flex-start; }
+.inboxitem input[type="checkbox"] {
+  width: 22px; height: 22px; flex: 0 0 22px; margin: 2px 0 0;
+  accent-color: var(--accent); cursor: pointer;
+}
+.inboxbar {
+  position: sticky; bottom: 8px; z-index: 5;
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 14px; padding: 10px 12px;
+  background: var(--card2); border: 1px solid var(--line);
+  border-radius: 14px; box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+}
+.inboxbar .spacer { flex: 1; }
+
 /* editor de dibujo */
 body.editing { overflow: hidden; }
 .editor {

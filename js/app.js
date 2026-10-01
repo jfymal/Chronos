@@ -20,6 +20,7 @@ let inbox = [];
 let filtro = '';
 let visibles = 60;
 let obraActual = null;
+let seleccionInbox = new Set();
 const urlCache = new Map();
 
 const AJUSTES_DEFECTO = { comprimir: true, maxDim: 1920, calidad: 0.82, autoSync: true, soloWifi: true };
@@ -473,37 +474,126 @@ async function renderRecordatorios() {
     <p class="hint" style="margin-top:16px">Nota: las notificaciones del navegador solo avisan con la app abierta. En el APK de Android sonará aunque esté cerrada.</p>`;
 }
 
+// selector de obra con buscador
+function elegirObra(onPick) {
+  openModal(`
+    <h2>Asignar a una obra</h2>
+    <input id="eo_buscar" type="search" placeholder="Buscar obra…" autocomplete="off">
+    <div id="eo_lista" class="menu-list" style="max-height:52vh;overflow:auto;margin-top:10px"></div>
+    <div class="modalactions"><button class="btn" id="eo_cancel">Cancelar</button></div>`, (m) => {
+    const lista = m.querySelector('#eo_lista');
+    const input = m.querySelector('#eo_buscar');
+    const pintar = () => {
+      const q = input.value.trim().toLowerCase();
+      const f = obras.filter((o) => (o.nombre + ' ' + (o.cliente || '') + ' ' + (o.direccion || '')).toLowerCase().includes(q));
+      lista.innerHTML = f.length
+        ? f.map((o) => `<button data-obra="${esc(o.id)}">${esc(o.nombre)}${o.estado ? ` <span class="hint">${esc(o.estado)}</span>` : ''}</button>`).join('')
+        : '<div class="hint" style="padding:12px">Sin coincidencias</div>';
+      lista.querySelectorAll('[data-obra]').forEach((b) => {
+        b.onclick = () => { closeModal(); onPick(b.dataset.obra); };
+      });
+    };
+    input.oninput = pintar;
+    pintar();
+    input.focus();
+    m.querySelector('#eo_cancel').onclick = closeModal;
+  });
+}
+
+async function asignarInboxA(obraId) {
+  let n = 0;
+  for (const id of [...seleccionInbox]) {
+    const it = inbox.find((x) => x.id === id);
+    if (!it) continue;
+    await db.put('entries', {
+      id: uid(), obraId,
+      tipo: it.tipo && String(it.tipo).startsWith('image') ? 'foto' : (it.blobId ? 'pdf' : (it.url && !it.texto ? 'enlace' : 'comentario')),
+      blobId: it.blobId, nombre: it.nombre, url: it.url, texto: it.texto || '',
+      creado: it.creado || new Date().toISOString(),
+      recordatorio: null, notificado: false, completado: false,
+    });
+    await db.del('inbox', it.id);
+    n++;
+  }
+  seleccionInbox.clear();
+  await reload();
+  if (n) location.hash = obraHash(obraId);
+  else route();
+}
+
+function barraInbox() {
+  const bar = document.getElementById('ib_bar');
+  const cnt = document.getElementById('ib_count');
+  if (!bar) return;
+  bar.hidden = seleccionInbox.size === 0;
+  if (cnt) cnt.textContent = seleccionInbox.size;
+  const todo = document.getElementById('ib_todo');
+  if (todo) todo.textContent = (seleccionInbox.size === inbox.length && inbox.length) ? 'Quitar selección' : 'Seleccionar todo';
+}
+
 async function renderInbox() {
   pageTitle.textContent = 'Recibidos';
   backBtn.hidden = true;
   fab.hidden = true;
   setActiveTab('#/inbox');
 
+  // descartar selecciones de elementos que ya no existen
+  seleccionInbox = new Set([...seleccionInbox].filter((id) => inbox.some((x) => x.id === id)));
+
   if (!inbox.length) {
-    view.innerHTML = `<div class="empty"><h2>Nada recibido</h2><p>Cuando compartas una foto o un enlace desde WhatsApp u otra app, llegará aquí para asignarlo a una obra.</p><p class="hint">En Android, instala la app y usa “Compartir → Obras”.</p></div>`;
+    view.innerHTML = `<div class="empty"><h2>Nada recibido</h2><p>Cuando compartas una foto o un enlace desde WhatsApp u otra app, llegará aquí para asignarlo a una obra.</p><p class="hint">En Android, instala la app y usa “Compartir → Chronos”.</p></div>`;
     return;
   }
-  const opts = (sel) => obras.map((o) => `<option value="${o.id}" ${sel === o.id ? 'selected' : ''}>${esc(o.nombre)}</option>`).join('');
+
   const rows = (await Promise.all(inbox.map(async (it) => {
     let body = '';
-    if (it.blobId) { const u = await blobUrl(it.blobId); body = u && String(it.tipo).startsWith('image') ? `<img class="entryimg" src="${u}" alt="">` : (u ? `<a class="filelink" href="${u}" target="_blank">📎 ${esc(it.nombre || 'archivo')}</a>` : ''); }
-    else if (it.url) body = `<div class="comment"><a href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.url)}</a></div>`;
+    if (it.blobId) {
+      const u = await blobUrl(it.blobId);
+      body = u && String(it.tipo).startsWith('image')
+        ? `<img class="entryimg" src="${u}" alt="">`
+        : (u ? `<a class="filelink" href="${u}" target="_blank" rel="noopener">📎 ${esc(it.nombre || 'archivo')}</a>` : '');
+    } else if (it.url) {
+      body = `<div class="comment"><a href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.url)}</a></div>`;
+    }
     if (it.texto) body += `<div class="comment">${esc(it.texto)}</div>`;
-    return `<div class="entry">
+    return `<label class="entry inboxitem">
+      <input type="checkbox" data-sel="${esc(it.id)}" ${seleccionInbox.has(it.id) ? 'checked' : ''}>
       <div class="entrybody">
         ${body}
-        <div class="entrymeta" style="gap:8px">
-          <select class="assignsel" id="sel_${it.id}" style="max-width:200px;padding:6px;border-radius:8px;border:1px solid var(--line);background:var(--card2);color:var(--text)">
-            <option value="">— Elegir obra —</option>${opts()}
-          </select>
-          <button class="minibtn" data-act="assign" data-id="${it.id}">Asignar</button>
-          <button class="minibtn danger" data-act="del-inbox" data-id="${it.id}">descartar</button>
-          <span>${fmt(it.creado)}</span>
-        </div>
+        <div class="entrymeta"><span>${fmt(it.creado)}</span></div>
       </div>
-    </div>`;
+    </label>`;
   }))).join('');
-  view.innerHTML = `<div class="entries">${rows}</div>`;
+
+  view.innerHTML = `
+    <div class="inboxhead"><button class="btn" id="ib_todo">Seleccionar todo</button></div>
+    <div class="entries">${rows}</div>
+    <div class="inboxbar" id="ib_bar" hidden>
+      <span><b id="ib_count">0</b> seleccionada(s)</span>
+      <div class="spacer"></div>
+      <button class="btn primary" id="ib_asignar">Asignar a…</button>
+      <button class="btn danger" id="ib_descartar">Descartar</button>
+    </div>`;
+
+  document.getElementById('ib_todo').onclick = () => {
+    if (seleccionInbox.size === inbox.length) seleccionInbox.clear();
+    else seleccionInbox = new Set(inbox.map((x) => x.id));
+    renderInbox();
+  };
+  document.getElementById('ib_asignar').onclick = () => elegirObra((obraId) => asignarInboxA(obraId));
+  document.getElementById('ib_descartar').onclick = async () => {
+    if (!confirm(`¿Descartar ${seleccionInbox.size} elemento(s) sin asignar?`)) return;
+    for (const id of [...seleccionInbox]) {
+      const it = inbox.find((x) => x.id === id);
+      if (!it) continue;
+      if (it.blobId) await db.del('blobs', it.blobId);
+      await db.del('inbox', it.id);
+    }
+    seleccionInbox.clear();
+    await reload();
+    route();
+  };
+  barraInbox();
 }
 
 /* ============================ compartir resumen ============================ */
@@ -1002,6 +1092,14 @@ function route() {
 }
 
 /* ============================ eventos ============================ */
+view.addEventListener('change', (ev) => {
+  const c = ev.target.closest('input[data-sel]');
+  if (!c) return;
+  if (c.checked) seleccionInbox.add(c.dataset.sel);
+  else seleccionInbox.delete(c.dataset.sel);
+  barraInbox();
+});
+
 view.addEventListener('click', async (ev) => {
   const go = ev.target.closest('[data-goto]');
   if (go) { location.hash = go.dataset.goto; return; }
@@ -1046,22 +1144,6 @@ view.addEventListener('click', async (ev) => {
   if (act === 'del-inbox') {
     const it = inbox.find((x) => x.id === id);
     if (it) { if (it.blobId) await db.del('blobs', it.blobId); await db.del('inbox', it.id); await reload(); route(); }
-    return;
-  }
-  if (act === 'assign') {
-    const sel = document.getElementById('sel_' + id);
-    const obraId = sel && sel.value;
-    if (!obraId) { alert('Elige una obra primero.'); return; }
-    const it = inbox.find((x) => x.id === id);
-    await db.put('entries', {
-      id: uid(), obraId,
-      tipo: it.tipo && String(it.tipo).startsWith('image') ? 'foto' : (it.blobId ? 'pdf' : (it.url && !it.texto ? 'enlace' : 'comentario')),
-      blobId: it.blobId, nombre: it.nombre, url: it.url, texto: it.texto || '',
-      creado: it.creado || new Date().toISOString(), recordatorio: null, notificado: false, completado: false,
-    });
-    await db.del('inbox', it.id);
-    await reload();
-    location.hash = obraHash(obraId);
     return;
   }
 });
