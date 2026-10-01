@@ -22,7 +22,33 @@ let token = null;
 let expira = 0;
 let cliente = null;
 let carpetaId = null;                 // ObrasApp
-const carpetasObra = new Map();       // nombre de obra -> id de carpeta
+const carpetasObra = new Map();       // clave -> id de carpeta (caché en memoria)
+let carpetasIndice = new Map();
+let fallosArchivos = 0;               // si algo falla con archivos, se reescanea la próxima vez       // obraId -> {obraId, nombre, carpetaId, fotosId} (persistido en el índice)
+
+function hashTexto(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return String(h);
+}
+
+function registraCarpeta(obraId, nombre, base, fotos) {
+  const prev = carpetasIndice.get(obraId) || {};
+  carpetasIndice.set(obraId, {
+    obraId,
+    nombre,
+    carpetaId: base || prev.carpetaId || null,
+    fotosId: fotos || prev.fotosId || null,
+  });
+}
+
+async function renombrarSolo(fileId, nombre) {
+  await api(`${API}/files/${fileId}?fields=id`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: nombre }),
+  });
+}
 
 export const configurado = () => !!CLIENT_ID;
 
@@ -226,31 +252,59 @@ async function asegurarCarpeta() {
   return carpetaId;
 }
 
-// Carpeta de una obra (se crea si no existe). `sub` = subcarpeta opcional ("Fotos").
-async function carpetaDeObra(nombre, sub) {
+// Carpeta de una obra. Se resuelve por el índice (por obraId, aguanta renombrados);
+// solo consulta Drive si no está en el índice.
+async function carpetaDeObra(nombre, sub, obraId) {
   const nombreSeguro = limpiarNombre(nombre) || 'Sin obra';
-  const clave = nombreSeguro + '|' + (sub || '');
+  const subSeguro = sub ? limpiarNombre(sub) : null;
+  const clave = (obraId || nombreSeguro) + '|' + (subSeguro || '');
   if (carpetasObra.has(clave)) return carpetasObra.get(clave);
+
+  const reg = obraId ? carpetasIndice.get(obraId) : null;
+
+  // 1) Directo desde el índice, si el nombre coincide
+  if (reg && reg.nombre === nombreSeguro) {
+    const id = subSeguro ? reg.fotosId : reg.carpetaId;
+    if (id) {
+      carpetasObra.set(clave, id);
+      return id;
+    }
+  }
+
   await asegurarCarpeta();
 
-  let baseId;
-  const claveBase = nombreSeguro + '|';
-  if (carpetasObra.has(claveBase)) {
-    baseId = carpetasObra.get(claveBase);
-  } else {
+  // 2) Base: por índice (renombrando si cambió el nombre) o por nombre
+  let baseId = reg && reg.carpetaId ? reg.carpetaId : null;
+  if (baseId && reg.nombre !== nombreSeguro) {
+    try { await renombrarSolo(baseId, nombreSeguro); }
+    catch (_) { baseId = null; }              // ya no existe: se resuelve por nombre
+  }
+  if (!baseId) {
+    baseId = carpetasObra.get('n:' + nombreSeguro) || null;
+  }
+  if (!baseId) {
     const q = `name='${nombreSeguro.replace(/'/g, "\\'")}' and mimeType='${MIME_CARPETA}' and trashed=false and '${carpetaId}' in parents`;
     const f = await listar(q);
     baseId = f.length ? f[0].id : await crearCarpeta(nombreSeguro, carpetaId);
-    carpetasObra.set(claveBase, baseId);
   }
-  if (!sub) return baseId;
+  carpetasObra.set('n:' + nombreSeguro, baseId);
 
-  const subSeguro = limpiarNombre(sub);
-  const q2 = `name='${subSeguro}' and mimeType='${MIME_CARPETA}' and trashed=false and '${baseId}' in parents`;
-  const f2 = await listar(q2);
-  const subId = f2.length ? f2[0].id : await crearCarpeta(subSeguro, baseId);
-  carpetasObra.set(clave, subId);
-  return subId;
+  let subId = null;
+  if (subSeguro) {
+    subId = carpetasObra.get('n:' + nombreSeguro + '/' + subSeguro) || (reg && reg.fotosId) || null;
+    if (!subId) {
+      const q2 = `name='${subSeguro}' and mimeType='${MIME_CARPETA}' and trashed=false and '${baseId}' in parents`;
+      const f2 = await listar(q2);
+      subId = f2.length ? f2[0].id : await crearCarpeta(subSeguro, baseId);
+    }
+    carpetasObra.set('n:' + nombreSeguro + '/' + subSeguro, subId);
+    carpetasObra.set(clave, subId);
+  } else {
+    carpetasObra.set(clave, baseId);
+  }
+
+  if (obraId) registraCarpeta(obraId, nombreSeguro, baseId, subId);
+  return subSeguro ? subId : baseId;
 }
 
 // Todos los ficheros bajo ObrasApp (un nivel de subcarpetas dentro de cada obra).
@@ -437,20 +491,35 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
       .filter((b) => blobsEnUso.has(b.id))
       .map((b) => [b.id, b])
   );
-  const construirIndice = () => JSON.stringify({
+  carpetasIndice = new Map((((remoto && remoto.carpetas) || [])).map((c) => [c.obraId, c]));
+
+  const cuerpoIndice = () => JSON.stringify({
     app: 'obras',
-    version: 2,
-    generado: new Date().toISOString(),
+    version: 3,
     obras: [...obrasM.values()],
     entries: [...entriesM.values()],
     blobs: [...metaSalida.values()],
     borrados: borradosM,
+    carpetas: [...carpetasIndice.values()],
   });
+
+  // Escribe el índice solo si ha cambiado de verdad (evita ~1 MB por sincronización)
+  async function escribirIndiceSiCambia() {
+    const cuerpo = cuerpoIndice();
+    const h = hashTexto(cuerpo);
+    const previo = await db.get('meta', 'drive_hash');
+    if (previo && previo.valor === h) return false;
+    const salida = JSON.parse(cuerpo);
+    salida.generado = new Date().toISOString();
+    await escribirDatos(JSON.stringify(salida));
+    await db.put('meta', { k: 'drive_hash', valor: h });
+    return true;
+  }
 
   db.pausarAvisos(true);
   try {
     onProgreso('Guardando índice en Drive…');
-    await escribirDatos(construirIndice());
+    await escribirIndiceSiCambia();
     await db.put('meta', { k: 'borrados', lista: borradosM });
     await db.put('meta', { k: 'drive_ultima', valor: new Date().toISOString() });
     // Referencias conocidas YA: así la app puede ofrecer "descargar" aunque el
@@ -471,11 +540,29 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
   // --- 2) Archivos. Protegido: un fallo aquí ya no impide que el índice suba. ---
   async function trabajarArchivos() {
   onProgreso('Revisando archivos…');
-  const arbol = await listarArbol();
+  const metaRemota = new Map((((remoto && remoto.blobs) || [])).map((b) => [b.id, b]));
+  const idsLocales = new Set(blobsL.map((b) => b.id));
+
+  // El índice ya sabe dónde está cada archivo (fileId y carpeta). Solo se escanea
+  // Drive entero si hay algo que descargar de lo que no tenemos referencia,
+  // o si se ha pedido expresamente (por ejemplo al desarchivar una obra).
+  const flagEscaneo = await db.get('meta', 'forzar_escaneo');
+  let necesitoArbol = !!flagEscaneo;
+  if (!necesitoArbol) {
+    for (const e of entriesM.values()) {
+      if (!e.blobId || idsLocales.has(e.blobId)) continue;
+      const ref = metaRemota.get(e.blobId);
+      if (!ref || !ref.file) { necesitoArbol = true; break; }
+    }
+  }
+  const arbol = necesitoArbol ? await listarArbol() : [];
+  if (necesitoArbol) {
+    for (const f of arbol) if (f.carpeta) carpetasObra.set('n:' + f.carpeta, f.carpetaId);
+    await db.del('meta', 'forzar_escaneo');
+  }
   const porNombre = new Map(arbol.map((f) => [f.name, f]));           // esquema antiguo: nombre == blobId
   const porId = new Map(arbol.map((f) => [f.id, f]));
   const porCarpetaYNombre = new Map(arbol.map((f) => [f.carpetaId + '|' + f.name, f]));
-  const metaRemota = new Map((((remoto && remoto.blobs) || [])).map((b) => [b.id, b]));
 
   const locales = new Map(blobsL.map((b) => [b.id, b]));
   const ocupados = new Map();   // carpetaId -> Set(nombres en uso)
@@ -499,17 +586,17 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
     revisados++;
     if (revisados % 25 === 0) onProgreso(`Ordenando archivos… ${revisados}/${porBlob.size}`);
 
-    // obra archivada: se deja como está, no se toca Drive
+    // obra archivada: no se toca Drive y se sueltan las referencias, para que
+    // al desarchivar la app vuelva a localizar los archivos donde estén.
     if (archivadas.has(entry.obraId)) {
-      const previo = metaRemota.get(blobId);
-      if (previo) metaSalida.set(blobId, previo);
+      metaSalida.set(blobId, { id: blobId, nombre: '', tipo: '', file: null, carpeta: null });
       continue;
     }
 
     const obra = obrasM.get(entry.obraId);
     // las fotos van a una subcarpeta "Fotos"; el resto (PDF, etc.) a la raíz de la obra
     const sub = entry.tipo === 'foto' ? 'Fotos' : null;
-    const carpetaDestino = await carpetaDeObra((obra && obra.nombre) || 'Sin obra', sub);
+    const carpetaDestino = await carpetaDeObra((obra && obra.nombre) || 'Sin obra', sub, entry.obraId);
     if (!ocupados.has(carpetaDestino)) ocupados.set(carpetaDestino, new Set());
     const nombresCarpeta = ocupados.get(carpetaDestino);
 
@@ -525,10 +612,13 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
     }
     nombresCarpeta.add(nombre);
 
-    // ¿existe ya en Drive?
+    // ¿existe ya en Drive? Primero el índice (no hace falta escanear);
+    // el escaneo solo se usa como red de seguridad.
     let ficha = null;
     const mr = metaRemota.get(blobId);
-    if (mr && mr.file && porId.has(mr.file)) ficha = porId.get(mr.file);
+    if (mr && mr.file) {
+      ficha = porId.get(mr.file) || { id: mr.file, name: mr.nombre || nombre, carpetaId: mr.carpeta || null };
+    }
     if (!ficha && porNombre.has(blobId)) ficha = porNombre.get(blobId);   // esquema antiguo
     if (!ficha) {
       const candidato = porCarpetaYNombre.get(carpetaDestino + '|' + nombre);
@@ -537,19 +627,22 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
 
     if (blob && blob.blob) {
       if (ficha) {
-        if (ficha.name !== nombre || ficha.carpetaId !== carpetaDestino) {
+        // Solo se mueve si sabemos de verdad dónde está (si no, se deja como está)
+        if (ficha.carpetaId && (ficha.name !== nombre || ficha.carpetaId !== carpetaDestino)) {
           mover.push({ fileId: ficha.id, nombre, destinoId: carpetaDestino, origenId: ficha.carpetaId });
         }
-        metaSalida.set(blobId, { id: blobId, nombre, tipo: blob.tipo || '', file: ficha.id });
+        metaSalida.set(blobId, { id: blobId, nombre, tipo: blob.tipo || '', file: ficha.id, carpeta: carpetaDestino });
       } else {
         subir.push({ blobId, nombre, carpetaId: carpetaDestino, blob: blob.blob, tipo: blob.tipo || '' });
+        // se anota ya, para que la subida rellene el fileId y no se repita
+        metaSalida.set(blobId, { id: blobId, nombre, tipo: blob.tipo || '', file: null, carpeta: carpetaDestino });
       }
     } else if (ficha) {
       // en modo bajo demanda solo se apunta dónde está, sin descargarlo
       if (!bajoDemanda) bajar.push({ blobId, fileId: ficha.id, nombre, entry });
-      metaSalida.set(blobId, { id: blobId, nombre, tipo: '', file: ficha.id });
+      metaSalida.set(blobId, { id: blobId, nombre, tipo: '', file: ficha.id, carpeta: carpetaDestino });
     } else {
-      metaSalida.set(blobId, { id: blobId, nombre, tipo: '', file: null });
+      metaSalida.set(blobId, { id: blobId, nombre, tipo: '', file: null, carpeta: null });
     }
   }
 
@@ -559,7 +652,7 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
 
   if (mover.length) {
     await enParalelo(mover, SUBIDA_PARALELA, async (m) => {
-      try { await renombrarMover(m.fileId, m.nombre, m.destinoId, m.origenId); } catch (_) { /* se reintentará */ }
+      try { await renombrarMover(m.fileId, m.nombre, m.destinoId, m.origenId); } catch (_) { fallosArchivos++; }
       avanza('Reorganizando archivos…');
     });
   }
@@ -569,7 +662,7 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
         const id = await subirNuevo(s.nombre, s.blob, s.carpetaId);
         const m = metaSalida.get(s.blobId);
         if (m) { m.file = id; m.tipo = s.tipo; m.nombre = s.nombre; }
-      } catch (_) { /* se reintentará */ }
+      } catch (_) { fallosArchivos++; }
       avanza('Subiendo archivos…');
     });
   }
@@ -578,7 +671,7 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
       try {
         const blob = await descargar(b.fileId);
         await db.put('blobs', { id: b.blobId, blob, nombre: b.nombre, tipo: blob.type || '' });
-      } catch (_) { /* se reintentará */ }
+      } catch (_) { fallosArchivos++; }
       avanza('Bajando archivos…');
     });
   }
@@ -592,7 +685,7 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
       if (entry) {
         const obra = obrasM.get(entry.obraId);
         const sub = entry.tipo === 'foto' ? 'Fotos' : null;
-        const destino = await carpetaDeObra((obra && obra.nombre) || 'Sin obra', sub);
+        const destino = await carpetaDeObra((obra && obra.nombre) || 'Sin obra', sub, entry.obraId);
         const nombre = nombreLegible(entry, null);
         try { await renombrarMover(f.id, nombre, destino, f.carpetaId); } catch (_) { /* opcional */ }
       }
@@ -658,12 +751,17 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
     res = await trabajarArchivos();
   } catch (err) {
     console.warn('Chronos: fallo en la parte de archivos (el índice sí se subió)', err);
+    fallosArchivos++;
+  }
+  if (fallosArchivos) {
+    await db.put('meta', { k: 'forzar_escaneo', valor: Date.now() });
+    fallosArchivos = 0;
   }
 
   // --- 4) Anotar los fileId definitivos en el índice (mejor esfuerzo) ---
   db.pausarAvisos(true);
   try {
-    await escribirDatos(construirIndice());
+    await escribirIndiceSiCambia();
     const mapaRemoto = {};
     for (const m of metaSalida.values()) {
       if (m.file) mapaRemoto[m.id] = { file: m.file, nombre: m.nombre || '', tipo: m.tipo || '' };

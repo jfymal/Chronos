@@ -169,6 +169,10 @@ function obraDialog(existing) {
       const nombre = m.querySelector('#f_nombre').value.trim();
       if (!nombre) { alert('Pon un nombre a la obra.'); return; }
       const chk = m.querySelector('#f_arch');
+      // Al desarchivar, forzamos un escaneo de Drive para reencontrar los archivos
+      if (chk && existing && existing.archivada && !chk.checked) {
+        await db.put('meta', { k: 'forzar_escaneo', valor: Date.now() });
+      }
       const data = {
         nombre,
         cliente: m.querySelector('#f_cliente').value.trim(),
