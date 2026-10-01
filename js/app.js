@@ -549,6 +549,7 @@ async function entryHtml(e, selMode) {
       <div class="entrymeta">
         <span>${iconFor(e.tipo)} ${fmt(e.creado)}</span>${chips}${remPill}
         ${e.tipo === 'foto' ? `<button class="minibtn" data-act="anotar" data-id="${e.id}">anotar</button>` : ''}
+        <button class="minibtn" data-act="mover" data-id="${e.id}">mover de obra</button>
         <button class="minibtn" data-act="fijar" data-id="${e.id}">${e.fijado ? '📌 quitar' : '📌 fijar'}</button>
         <button class="minibtn" data-act="recordatorio" data-id="${e.id}">${e.recordatorio ? 'editar recordatorio' : 'poner recordatorio'}</button>
         <button class="minibtn danger" data-act="del" data-id="${e.id}">borrar</button>
@@ -1602,6 +1603,23 @@ view.addEventListener('click', async (ev) => {
     if (!u) { alert('El archivo no está en este dispositivo. Descárgalo primero.'); return; }
     const w = window.open(u, '_blank', 'noopener');
     if (!w) alert('El navegador bloqueó la ventana.\n\nPermite las ventanas emergentes para esta web y vuelve a intentarlo.');
+    return;
+  }
+  if (act === 'mover') {
+    const e = entries.find((x) => x.id === id);
+    if (!e) return;
+    elegirObra(async (destino) => {
+      const n = await moverEntradas([id], destino);
+      await reload();
+      const nombre = (obras.find((x) => x.id === destino) || {}).nombre || '';
+      if (n) {
+        alert(`Movida a "${nombre}".`);
+        location.hash = obraHash(destino);
+      } else {
+        alert(`Ya estaba en "${nombre}".`);
+        route();
+      }
+    });
     return;
   }
   if (act === 'fijar') {
