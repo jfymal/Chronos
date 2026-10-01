@@ -611,7 +611,7 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
   let busquedas = 0;
   for (const [blobId, entry] of porBlob) {
     revisados++;
-    if (revisados % 25 === 0) onProgreso(`Ordenando archivos… ${revisados}/${porBlob.size}`);
+    if (revisados % 25 === 0 || revisados === porBlob.size) onProgreso(`Ordenando archivos… ${revisados}/${porBlob.size}`);
 
     // obra archivada: no se toca Drive y se sueltan las referencias, para que
     // al desarchivar la app vuelva a localizar los archivos donde estén.
