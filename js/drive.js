@@ -315,7 +315,8 @@ function enParalelo(items, n, fn) {
 }
 
 /* ------------------------------- sincronizar ------------------------------- */
-export async function sincronizar(onProgreso = () => {}) {
+export async function sincronizar(onProgreso = () => {}, opts = {}) {
+  const bajoDemanda = !!opts.bajoDemanda;
   if (!CLIENT_ID) throw new Error('Falta el Client ID en js/config.js');
   await pedirToken(true);
   await asegurarCarpeta();
@@ -437,7 +438,8 @@ export async function sincronizar(onProgreso = () => {}) {
         subir.push({ blobId, nombre, carpetaId: carpetaDestino, blob: blob.blob, tipo: blob.tipo || '' });
       }
     } else if (ficha) {
-      bajar.push({ blobId, fileId: ficha.id, nombre, entry });
+      // en modo bajo demanda solo se apunta dónde está, sin descargarlo
+      if (!bajoDemanda) bajar.push({ blobId, fileId: ficha.id, nombre, entry });
       metaSalida.set(blobId, { id: blobId, nombre, tipo: '', file: ficha.id });
     } else {
       metaSalida.set(blobId, { id: blobId, nombre, tipo: '', file: null });
@@ -549,6 +551,13 @@ export async function sincronizar(onProgreso = () => {}) {
   };
   await escribirDatos(JSON.stringify(salida));
 
+  // referencia local de dónde está cada archivo en Drive (para descargar a demanda)
+  const mapaRemoto = {};
+  for (const m of metaSalida.values()) {
+    if (m.file) mapaRemoto[m.id] = { file: m.file, nombre: m.nombre || '', tipo: m.tipo || '' };
+  }
+  await db.put('meta', { k: 'drive_blobs', valor: mapaRemoto });
+
   const sello = new Date().toISOString();
   await db.put('meta', { k: 'drive_ultima', valor: sello });
   return {
@@ -560,6 +569,17 @@ export async function sincronizar(onProgreso = () => {}) {
     movidos: mover.length,
     papelera: aPapeleraN,
   };
+}
+
+// Descarga un archivo concreto desde Drive (modo bajo demanda).
+export async function descargarBlob(blobId) {
+  const m = await db.get('meta', 'drive_blobs');
+  const ref = m && m.valor && m.valor[blobId];
+  if (!ref || !ref.file) throw new Error('Ese archivo no está en Drive.');
+  await pedirToken(false);
+  const blob = await descargar(ref.file);
+  await db.put('blobs', { id: blobId, blob, nombre: ref.nombre || blobId, tipo: blob.type || ref.tipo || '' });
+  return blob;
 }
 
 // Mueve a la papelera de Drive la carpeta de una obra (no borra nada de la app).

@@ -21,9 +21,10 @@ let filtro = '';
 let visibles = 60;
 let obraActual = null;
 let seleccionInbox = new Set();
+let blobsRemotos = {};   // blobId -> {file, nombre, tipo} en Drive (modo bajo demanda)
 const urlCache = new Map();
 
-const AJUSTES_DEFECTO = { comprimir: true, maxDim: 1920, calidad: 0.82, autoSync: true, soloWifi: true, horaRecordatorio: '08:00' };
+const AJUSTES_DEFECTO = { comprimir: true, maxDim: 1920, calidad: 0.82, autoSync: true, soloWifi: true, horaRecordatorio: '08:00', bajoDemanda: false };
 let ajustes = { ...AJUSTES_DEFECTO };
 async function cargarAjustes() {
   const m = await db.get('meta', 'ajustes');
@@ -95,6 +96,8 @@ async function reload() {
   obras = (await db.getAll('obras')).sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es'));
   entries = await db.getAll('entries');
   inbox = (await db.getAll('inbox')).sort((a, b) => String(b.creado || '').localeCompare(String(a.creado || '')));
+  const mb = await db.get('meta', 'drive_blobs');
+  blobsRemotos = (mb && mb.valor) || {};
 }
 
 // Borra los archivos de una obra solo de este dispositivo (siguen en Drive).
@@ -502,9 +505,12 @@ async function entryHtml(e) {
   const sinArchivo = obraDe && obraDe.archivada
     ? '<em>📦 Archivada — este archivo no está en el dispositivo</em>'
     : '<em>Archivo no disponible en este dispositivo</em>';
+  const enDrive = e.blobId && blobsRemotos[e.blobId]
+    ? `<div class="pendiente">☁️ Está en tu Drive · <button class="minibtn" data-act="bajar" data-id="${e.id}">descargar</button></div>`
+    : '';
   if (e.tipo === 'foto') {
     const u = await blobUrl(e.blobId);
-    body = u ? `<img class="entryimg" src="${u}" alt="" loading="lazy">` : sinArchivo;
+    body = u ? `<img class="entryimg" src="${u}" alt="" loading="lazy">` : (enDrive || sinArchivo);
   } else if (e.tipo === 'pdf') {
     const u = await blobUrl(e.blobId);
     const nom = e.nombre || 'documento.pdf';
@@ -515,7 +521,7 @@ async function entryHtml(e) {
            <a class="minibtn" href="${u}" download="${esc(nom)}">descargar</a>
          </div>
          <div class="pdfbox" id="pdf_${e.id}" hidden></div>`
-      : sinArchivo;
+      : (enDrive || sinArchivo);
   } else if (e.tipo === 'enlace') {
     body = `<a class="filelink" href="${esc(e.url)}" target="_blank" rel="noopener">🔗 ${esc(e.url)}</a>`;
   } else {
@@ -1028,7 +1034,7 @@ async function sincronizarDrive(opts = {}) {
     const r = await drive.sincronizar((msg) => {
       if (!silencioso) pageTitle.textContent = msg;
       else if (syncBtn) syncBtn.title = msg;
-    });
+    }, { bajoDemanda: ajustes.bajoDemanda });
     await reload();
     route();
     if (!silencioso) {
@@ -1079,6 +1085,26 @@ async function sincronizarAuto() {
   await sincronizarDrive({ silencioso: true });
 }
 
+function descargaDialog() {
+  openModal(`
+    <h2>Descarga de archivos</h2>
+    <p class="hint">Qué hacer con las fotos y PDFs que ya están en tu Drive. En ambos modos se sincronizan siempre los comentarios, fechas y recordatorios.</p>
+    <div class="menu-list">
+      <button data-bd="0">${!ajustes.bajoDemanda ? '✅ ' : ''}Descargar todo <span class="hint">— móvil/tablet, para trabajar sin conexión en la obra</span></button>
+      <button data-bd="1">${ajustes.bajoDemanda ? '✅ ' : ''}Solo cuando abro un archivo <span class="hint">— PC del trabajo: baja unos KB en vez de 1,2 GB</span></button>
+    </div>
+    <div class="modalactions"><button class="btn" id="d_close">Cerrar</button></div>`, (m) => {
+    m.querySelectorAll('[data-bd]').forEach((b) => {
+      b.onclick = async () => {
+        await guardarAjustes({ bajoDemanda: b.dataset.bd === '1' });
+        closeModal();
+        route();
+      };
+    });
+    m.querySelector('#d_close').onclick = closeModal;
+  });
+}
+
 function autoSyncDialog() {
   openModal(`
     <h2>Sincronización automática</h2>
@@ -1119,6 +1145,7 @@ function settingsDialog() {
       <button id="s_notif">🔔 Activar notificaciones</button>
       <button id="s_calidad">🖼️ Calidad de las fotos</button>
       <button id="s_auto">🔁 Sincronización automática</button>
+      <button id="s_descarga">📥 Descarga de archivos</button>
       <button id="s_export">⬇️ Exportar copia de seguridad (.json)</button>
       <button id="s_import">⬆️ Importar copia de seguridad</button>
       <button id="s_migracion">📥 Importar migración de AppSheet (1 clic)</button>
@@ -1137,6 +1164,7 @@ function settingsDialog() {
     m.querySelector('#s_migracion').onclick = importarDesdeServidor;
     m.querySelector('#s_calidad').onclick = calidadDialog;
     m.querySelector('#s_auto').onclick = autoSyncDialog;
+    m.querySelector('#s_descarga').onclick = descargaDialog;
     m.querySelector('#s_drive').onclick = sincronizarDrive;
   });
 }
@@ -1295,6 +1323,19 @@ view.addEventListener('click', async (ev) => {
     box.innerHTML = `<iframe src="${u}" title="PDF" style="width:100%;height:75vh;border:1px solid var(--line);border-radius:10px;background:#fff"></iframe>`;
     box.hidden = false;
     btn.textContent = 'ocultar';
+    return;
+  }
+  if (act === 'bajar') {
+    const e = entries.find((x) => x.id === id);
+    if (!e || !e.blobId) return;
+    btn.textContent = 'descargando…';
+    try {
+      await drive.descargarBlob(e.blobId);
+      await route();
+    } catch (err) {
+      alert('No se pudo descargar:\n\n' + err.message);
+      btn.textContent = 'descargar';
+    }
     return;
   }
   if (act === 'toggle-done') {

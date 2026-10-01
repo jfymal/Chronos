@@ -238,6 +238,13 @@ a { color: inherit; text-decoration: none; }
 .calselec { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; }
 .resumen { margin: 10px 0 12px; color: var(--muted); font-size: .9rem; }
 
+/* archivo disponible en Drive pero no descargado */
+.pendiente {
+  display: inline-block; color: var(--muted); font-size: .9rem;
+  background: var(--card2); border: 1px dashed var(--line);
+  border-radius: 10px; padding: 10px 12px;
+}
+
 /* archivar obra */
 .archbox {
   border: 1px solid var(--line); border-radius: 12px;
