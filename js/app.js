@@ -1498,7 +1498,8 @@ document.addEventListener('visibilitychange', async () => {
     return;
   }
   const u = await drive.ultimaSync();
-  if (minutosDesde(u) > 10) programarSync(1500);
+  // al volver a la app, comprobar cambios remotos de inmediato
+  if (sucio || minutosDesde(u) > 0.75) programarSync(800);
 });
 
 // Aviso si se intenta cerrar con cambios sin sincronizar (clave en incógnito).
