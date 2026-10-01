@@ -499,8 +499,7 @@ async function renderObra(id) {
   if (!o) { location.hash = '#/'; return; }
   pageTitle.textContent = o.nombre;
   backBtn.hidden = false;
-  fab.hidden = false;
-  fab.onclick = () => entryMenu(id);
+  fab.hidden = true;               // en la obra se usa la barra inferior
   setActiveTab('');
 
   const es = entriesOf(id);
@@ -516,15 +515,22 @@ async function renderObra(id) {
       </div>
       ${o.notas ? `<div class="notas">${esc(o.notas)}</div>` : ''}
       <div class="rowbtns">
-        <button class="btn primary" id="b_add">+ Añadir</button>
         <button class="btn" id="b_edit">Editar</button>
         <button class="btn" id="b_share">Compartir resumen</button>
       </div>
     </section>
-    ${es.length ? `<div class="entries">${blocks.join('')}</div>` : `<div class="empty"><p>Aún no hay nada en esta obra. Pulsa <b>+ Añadir</b>.</p></div>`}
+    ${es.length ? `<div class="entries">${blocks.join('')}</div>` : `<div class="empty"><p>Aún no hay nada en esta obra. Usa <b>📷 Foto</b> o <b>💬 Comentario</b> aquí abajo.</p></div>`}
     ${es.length > visibles ? `<div style="text-align:center;margin-top:14px"><button class="btn" id="b_more">Mostrar más (${es.length - visibles} restantes)</button></div>` : ''}
+    <div class="obrabar">
+      <button class="btn primary" id="ob_foto">📷 Foto</button>
+      <button class="btn" id="ob_com">💬 Comentario</button>
+      <button class="btn mas" id="ob_mas" aria-label="Más opciones">＋</button>
+    </div>
+    <div style="height:62px"></div>
   `;
-  view.querySelector('#b_add').onclick = () => entryMenu(id);
+  view.querySelector('#ob_foto').onclick = () => pickFiles('image/*', 'environment', (fs) => addFiles(id, fs, 'foto'));
+  view.querySelector('#ob_com').onclick = () => commentDialog(id);
+  view.querySelector('#ob_mas').onclick = () => entryMenu(id);
   view.querySelector('#b_edit').onclick = () => obraDialog(o);
   view.querySelector('#b_share').onclick = () => shareResumen(o);
   const more = view.querySelector('#b_more');

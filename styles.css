@@ -238,6 +238,23 @@ a { color: inherit; text-decoration: none; }
 .calselec { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; }
 .resumen { margin: 10px 0 12px; color: var(--muted); font-size: .9rem; }
 
+/* barra de acciones dentro de una obra */
+.obrabar {
+  position: fixed; left: 0; right: 0;
+  bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
+  z-index: 24;
+  display: flex; gap: 8px; align-items: center;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(10px);
+  border-top: 1px solid var(--line);
+}
+.obrabar .btn { flex: 1; padding: 13px 10px; border-radius: 12px; font-size: .95rem; }
+.obrabar .btn.mas { flex: 0 0 58px; font-size: 1.3rem; line-height: 1; padding: 10px 0; }
+@media (min-width: 620px) {
+  .obrabar { left: 50%; transform: translateX(-50%); max-width: 860px; border-radius: 14px 14px 0 0; border: 1px solid var(--line); border-bottom: 0; }
+}
+
 /* recibidos */
 .inboxhead { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
 .inboxitem { cursor: pointer; align-items: flex-start; }
