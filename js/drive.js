@@ -116,16 +116,16 @@ async function cargarGIS() {
 const TOKEN_KEY = 'chronos_token';
 
 function guardarToken() {
-  try { sessionStorage.setItem(TOKEN_KEY, JSON.stringify({ token, expira })); } catch (_) { /* sin sessionStorage */ }
+  try { localStorage.setItem(TOKEN_KEY, JSON.stringify({ token, expira })); } catch (_) { /* sin almacenamiento */ }
 }
 function olvidarToken() {
   token = null;
   expira = 0;
-  try { sessionStorage.removeItem(TOKEN_KEY); } catch (_) { /* nada */ }
+  try { localStorage.removeItem(TOKEN_KEY); } catch (_) { /* nada */ }
 }
 function leerTokenGuardado() {
   try {
-    const raw = sessionStorage.getItem(TOKEN_KEY);
+    const raw = localStorage.getItem(TOKEN_KEY);
     if (!raw) return null;
     const o = JSON.parse(raw);
     if (o && o.token && Date.now() < (o.expira || 0) - 60000) {
@@ -577,15 +577,10 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
   // El índice ya sabe dónde está cada archivo (fileId y carpeta). Solo se escanea
   // Drive entero si hay algo que descargar de lo que no tenemos referencia,
   // o si se ha pedido expresamente (por ejemplo al desarchivar una obra).
+  // El escaneo completo es el último recurso: solo si se pide expresamente.
+  // Para un archivo suelto sin referencia se busca por su nombre en su carpeta.
   const flagEscaneo = await db.get('meta', 'forzar_escaneo');
-  let necesitoArbol = !!flagEscaneo;
-  if (!necesitoArbol) {
-    for (const e of entriesM.values()) {
-      if (!e.blobId || idsLocales.has(e.blobId)) continue;
-      const ref = metaRemota.get(e.blobId);
-      if (!ref || !ref.file) { necesitoArbol = true; break; }
-    }
-  }
+  const necesitoArbol = !!flagEscaneo;
   const arbol = necesitoArbol ? await listarArbol() : [];
   if (necesitoArbol) {
     for (const f of arbol) if (f.carpeta) carpetasObra.set('n:' + f.carpeta, f.carpetaId);
@@ -613,6 +608,7 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
   // metaSalida viene de fuera, ya sembrado con las referencias conocidas
 
   let revisados = 0;
+  let busquedas = 0;
   for (const [blobId, entry] of porBlob) {
     revisados++;
     if (revisados % 25 === 0) onProgreso(`Ordenando archivos… ${revisados}/${porBlob.size}`);
@@ -654,6 +650,16 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
     if (!ficha) {
       const candidato = porCarpetaYNombre.get(carpetaDestino + '|' + nombre);
       if (candidato) ficha = candidato;
+    }
+    // Último recurso barato: buscar ese archivo por su nombre en su carpeta
+    // (1 petición) en lugar de recorrer todo Drive (2N+1).
+    if (!ficha && !(blob && blob.blob) && busquedas < 60) {
+      busquedas++;
+      try {
+        const q = `name='${nombre.replace(/'/g, "\\'")}' and mimeType!='${MIME_CARPETA}' and trashed=false and '${carpetaDestino}' in parents`;
+        const f = await listar(q);
+        if (f.length) ficha = { id: f[0].id, name: f[0].name, carpetaId: carpetaDestino };
+      } catch (_) { /* se deja sin ficha */ }
     }
 
     if (blob && blob.blob) {
