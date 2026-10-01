@@ -1056,6 +1056,7 @@ async function sincronizarDrive(opts = {}) {
     const r = await drive.sincronizar((msg) => {
       progresoActual = msg;
       anota(msg);
+      pintarEstadoSync();
       if (!silencioso) pageTitle.textContent = msg;
       else if (syncBtn) syncBtn.title = msg;
     }, {
@@ -1165,20 +1166,35 @@ function autoSyncDialog() {
   });
 }
 
-async function refrescarBotonSync() {
-  if (!syncBtn) return;
-  syncBtn.hidden = !drive.configurado();
+// Estados visualmente inequívocos: color + franja con texto.
+function pintarEstadoSync() {
+  const bar = document.getElementById('syncBar');
+  if (syncBtn) { syncBtn.className = 'iconbtn'; syncBtn.textContent = '☁'; syncBtn.hidden = !drive.configurado(); }
+  if (bar) { bar.hidden = true; bar.className = 'syncbar'; }
   if (!drive.configurado()) return;
-  const u = await drive.ultimaSync();
+
+  if (sincronizando) {
+    if (syncBtn) { syncBtn.className = 'iconbtn trabajando'; syncBtn.title = 'Sincronizando…'; }
+    if (bar) { bar.hidden = false; bar.className = 'syncbar trabajando'; bar.textContent = '⏳ ' + (progresoActual || 'Sincronizando…'); }
+    return;
+  }
   if (ultimoError) {
-    syncBtn.textContent = '⚠';
-    syncBtn.title = 'Falló la sincronización: ' + ultimoError.mensaje + ' — pulsa para reintentar';
-  } else if (sucio) {
-    syncBtn.textContent = '☁︎';
-    syncBtn.title = 'Hay cambios sin subir — pulsa para sincronizar';
-  } else {
-    syncBtn.textContent = '☁';
-    syncBtn.title = u ? 'Sincronizado: ' + fmt(u) : 'Sincronizar con Drive';
+    if (syncBtn) { syncBtn.className = 'iconbtn error'; syncBtn.textContent = '!'; syncBtn.title = 'Falló la sincronización'; }
+    if (bar) { bar.hidden = false; bar.className = 'syncbar error'; bar.textContent = '⚠ No se pudo sincronizar: ' + ultimoError.mensaje + ' — pulsa aquí para reintentar'; }
+    return;
+  }
+  if (sucio) {
+    if (syncBtn) { syncBtn.className = 'iconbtn pendiente'; syncBtn.title = 'Hay cambios sin subir'; syncBtn.innerHTML = '☁<span class="punto"></span>'; }
+    if (bar) { bar.hidden = false; bar.className = 'syncbar pendiente'; bar.textContent = '↑ Hay cambios sin subir — pulsa aquí para sincronizar ahora'; }
+  }
+}
+
+async function refrescarBotonSync() {
+  pintarEstadoSync();
+  if (!syncBtn || !drive.configurado()) return;
+  if (!sincronizando && !sucio && !ultimoError) {
+    const u = await drive.ultimaSync();
+    syncBtn.title = u ? 'Todo sincronizado · ' + fmt(u) : 'Sincronizar con Drive';
   }
 }
 
@@ -1452,7 +1468,8 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal
 
 // Sincronización automática: al cambiar datos, al recuperar red y al volver a la app.
 let sucio = false;   // hay cambios locales que aún no han subido a Drive
-db.onWrite(() => { sucio = true; programarSync(); });
+db.onWrite(() => { sucio = true; programarSync(); pintarEstadoSync(); });
+document.getElementById('syncBar').onclick = () => { if (!sincronizando) sincronizarDrive(); };
 window.addEventListener('online', () => programarSync(2000));
 document.addEventListener('visibilitychange', async () => {
   if (document.visibilityState === 'hidden') {
