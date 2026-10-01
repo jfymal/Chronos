@@ -1,5 +1,6 @@
 import * as db from './db.js';
 import * as drive from './drive.js';
+import { VERSION } from './config.js';
 
 /* ============================ DOM ============================ */
 const view = document.getElementById('view');
@@ -1115,11 +1116,21 @@ function programarSync(retraso) {
   syncTimer = setTimeout(sincronizarAuto, retraso === undefined ? 5000 : retraso);
 }
 
+let motivoSync = '';
+function setMotivo(m) {
+  if (m === motivoSync) return;
+  motivoSync = m;
+  if (m) anota('Sincronización aplazada: ' + m);
+  pintarEstadoSync();
+}
+
 async function sincronizarAuto() {
-  if (!ajustes.autoSync || !drive.configurado()) return;
+  if (!ajustes.autoSync) { setMotivo('la sincronización automática está desactivada'); return; }
+  if (!drive.configurado()) return;
   if (sincronizando) { syncPendiente = true; return; }   // no se descarta: se re-encola al terminar
-  if (!navigator.onLine) return;
-  if (ajustes.soloWifi && !enWifi()) return;
+  if (!navigator.onLine) { setMotivo('sin conexión'); return; }
+  if (ajustes.soloWifi && !enWifi()) { setMotivo('esperando WiFi (dato móvil)'); return; }
+  setMotivo('');
   await sincronizarDrive({ silencioso: true });
 }
 
@@ -1185,7 +1196,8 @@ function pintarEstadoSync() {
   }
   if (sucio) {
     if (syncBtn) { syncBtn.className = 'iconbtn pendiente'; syncBtn.title = 'Hay cambios sin subir'; syncBtn.innerHTML = '☁<span class="punto"></span>'; }
-    if (bar) { bar.hidden = false; bar.className = 'syncbar pendiente'; bar.textContent = '↑ Hay cambios sin subir — pulsa aquí para sincronizar ahora'; }
+    const detalle = motivoSync ? ` (${motivoSync})` : '';
+    if (bar) { bar.hidden = false; bar.className = 'syncbar pendiente'; bar.textContent = `↑ Hay cambios sin subir${detalle} — pulsa aquí para sincronizar`; }
   }
 }
 
@@ -1233,7 +1245,7 @@ async function settingsDialog() {
   const estado = await estadoSyncTexto();
   openModal(`
     <h2>Ajustes</h2>
-    <p class="hint" style="margin:-6px 0 12px">${estado}</p>
+    <p class="hint" style="margin:-6px 0 12px">${estado}<br><span style="opacity:.6">versión ${VERSION}</span></p>
     <div class="menu-list">
       <button id="s_notif">🔔 Activar notificaciones</button>
       <button id="s_calidad">🖼️ Calidad de las fotos</button>
@@ -1490,6 +1502,7 @@ async function init() {
   if ('serviceWorker' in navigator) {
     try { await navigator.serviceWorker.register('sw.js'); } catch (_) { /* sin SW */ }
   }
+  anota('Chronos ' + VERSION + ' — inicio');
   await cargarAjustes();
   await reload();
   route();
