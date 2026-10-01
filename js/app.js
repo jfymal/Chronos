@@ -1100,8 +1100,13 @@ async function openEditor(obraId, baseEntry) {
   ov.querySelector('#ed-cancel').addEventListener('click', cerrar);
 
   ov.querySelector('#ed-save').addEventListener('click', async () => {
-    const tipo = base ? 'image/jpeg' : 'image/png';
+    const esLienzoBase = !!baseEntry && (baseEntry.lienzo === true || /^lienzo\b/i.test(baseEntry.nombre || ''));
+    // En una FOTO: se conserva el original y se crea la copia anotada.
+    // En un LIENZO o un PDF: se sustituye, solo queda la última versión.
+    const conservarOriginal = !!baseEntry && !esLienzoBase && baseEntry.tipo === 'foto';
+    const tipo = (base && !esLienzoBase) ? 'image/jpeg' : 'image/png';
     const calidad = tipo === 'image/jpeg' ? (ajustes.calidad || 0.82) : undefined;
+
     const salida = [];
     for (let i = 0; i < paginas.length; i++) {
       const vacia = paginas[i].strokes.length === 0 && !(base && i === 0);
@@ -1116,33 +1121,37 @@ async function openEditor(obraId, baseEntry) {
 
     const baseNombre = (baseEntry && baseEntry.nombre ? baseEntry.nombre.replace(/\.[^.]+$/, '') : 'Lienzo');
 
-    if (baseEntry) {
-      // SUSTITUIR: la misma entrada pasa a ser la versión nueva. No se duplica.
+    if (baseEntry && !conservarOriginal) {
+      // SUSTITUIR: la misma entrada pasa a ser la versión nueva
       const viejo = baseEntry.blobId;
       const blobId = uid();
-      await db.put('blobs', { id: blobId, blob: salida[0], nombre: base ? 'anotacion.jpg' : 'lienzo.png', tipo });
+      await db.put('blobs', { id: blobId, blob: salida[0], nombre: esLienzoBase ? 'lienzo.png' : 'anotacion.jpg', tipo });
       baseEntry.blobId = blobId;
       baseEntry.actualizado = new Date().toISOString();
+      if (esLienzoBase) baseEntry.lienzo = true;
       await db.put('entries', baseEntry);
       if (viejo && viejo !== blobId) {
         await db.del('blobs', viejo);
-        await marcarBorrado(viejo, 'blob');   // que Drive mande el archivo viejo a la papelera
+        await marcarBorrado(viejo, 'blob');   // el archivo viejo va a la papelera de Drive
       }
       for (let k = 1; k < salida.length; k++) {
         const bid = uid();
         await db.put('blobs', { id: bid, blob: salida[k], nombre: 'pagina.png', tipo });
         await db.put('entries', {
-          id: uid(), obraId, tipo: 'foto', blobId: bid, nombre: `${baseNombre} pág ${k + 1}`,
+          id: uid(), obraId, tipo: 'foto', blobId: bid, nombre: `${baseNombre} pág ${k + 1}`, lienzo: true,
           texto: '', creado: new Date().toISOString(), recordatorio: null, notificado: false, completado: false,
         });
       }
     } else {
+      // NUEVA entrada: lienzo nuevo, o copia anotada de una foto (el original se conserva)
       for (let k = 0; k < salida.length; k++) {
         const bid = uid();
-        await db.put('blobs', { id: bid, blob: salida[k], nombre: 'lienzo.png', tipo });
+        await db.put('blobs', { id: bid, blob: salida[k], nombre: baseEntry ? 'anotacion.jpg' : 'lienzo.png', tipo });
+        const nombre = baseEntry
+          ? (salida.length > 1 ? `${baseNombre} (anotado) pág ${k + 1}` : `${baseNombre} (anotado)`)
+          : (salida.length > 1 ? `Lienzo pág ${k + 1}` : 'Lienzo');
         await db.put('entries', {
-          id: uid(), obraId, tipo: 'foto', blobId: bid,
-          nombre: salida.length > 1 ? `Lienzo pág ${k + 1}` : 'Lienzo',
+          id: uid(), obraId, tipo: 'foto', blobId: bid, nombre, lienzo: !baseEntry,
           texto: '', creado: new Date().toISOString(), recordatorio: null, notificado: false, completado: false,
         });
       }
