@@ -152,8 +152,9 @@ function obraDialog(existing) {
     <label>Notas<textarea id="f_notas" placeholder="Detalles, teléfonos, observaciones…">${esc(o.notas || '')}</textarea></label>
     ${existing ? `<div class="archbox">
       <label class="checkline"><input type="checkbox" id="f_arch" ${o.archivada ? 'checked' : ''}> <span>Obra <b>archivada</b> — sus archivos no se sincronizan con Drive</span></label>
-      <p class="hint">Úsalo cuando termines la obra y quieras guardar las fotos fuera de Drive para liberar espacio. Al desmarcarlo y devolver la carpeta a Drive, todo vuelve a su sitio.</p>
-      ${o.archivada ? '<button class="btn" id="f_liberar" type="button">Liberar espacio en este dispositivo</button>' : ''}
+      <p class="hint">Úsalo cuando termines la obra y quieras guardar las fotos fuera de Drive para liberar espacio. <b>Guarda primero el cambio</b> y, al reabrir esta ventana, aparecerán los botones para liberar espacio. Al desmarcarlo y devolver la carpeta a Drive, todo vuelve a su sitio.</p>
+      ${o.archivada ? `<button class="btn" id="f_liberar" type="button">Liberar espacio en este dispositivo</button>
+        <button class="btn" id="f_drive" type="button">Enviar la carpeta de Drive a la papelera</button>` : ''}
     </div>` : ''}
     <div class="modalactions">
       ${existing ? '<button class="btn danger" id="f_del">Borrar obra</button>' : ''}
@@ -185,6 +186,18 @@ function obraDialog(existing) {
       if (!confirm('Se borrarán las fotos y PDFs de esta obra SOLO de este dispositivo.\n\nAsegúrate de tenerlos guardados fuera de Drive antes de continuar.\n\n¿Continuar?')) return;
       const n = await liberarEspacioObra(existing.id);
       alert(`Liberados ${n} archivo(s) de este dispositivo.\n\nSiguen guardados en Drive y puedes volver a bajarlos cuando quieras.`);
+    };
+    const fuera = m.querySelector('#f_drive');
+    if (fuera) fuera.onclick = async () => {
+      if (!confirm('Se moverá la carpeta de esta obra en Drive a la PAPELERA de Drive.\n\nAntes asegúrate de haberla descargado si quieres conservarla.\n\nPodrás recuperarla desde Drive durante 30 días.\n\n¿Continuar?')) return;
+      try {
+        const n = await drive.mandarCarpetaAPapelera(existing.nombre);
+        alert(n
+          ? 'Hecho. La carpeta está en la papelera de Drive (recuperable 30 días).'
+          : 'No encontré la carpeta en Drive. Puede que ya la hubieras quitado.');
+      } catch (err) {
+        alert('No se pudo mover:\n\n' + err.message);
+      }
     };
     const del = m.querySelector('#f_del');
     if (del) del.onclick = async () => {

@@ -562,6 +562,21 @@ export async function sincronizar(onProgreso = () => {}) {
   };
 }
 
+// Mueve a la papelera de Drive la carpeta de una obra (no borra nada de la app).
+export async function mandarCarpetaAPapelera(nombreObra) {
+  await pedirToken(true);
+  await asegurarCarpeta();
+  const nombreSeguro = limpiarNombre(nombreObra);
+  const q = `name='${nombreSeguro.replace(/'/g, "\\'")}' and mimeType='${MIME_CARPETA}' and trashed=false and '${carpetaId}' in parents`;
+  const fs = await listar(q);
+  let n = 0;
+  for (const f of fs) {
+    if (await aPapelera(f.id)) n++;
+  }
+  carpetasObra.delete(nombreSeguro + '|');
+  return n;
+}
+
 export async function ultimaSync() {
   const m = await db.get('meta', 'drive_ultima');
   return m && m.valor;
