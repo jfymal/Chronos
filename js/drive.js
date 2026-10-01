@@ -378,6 +378,9 @@ export async function sincronizar(onProgreso = () => {}) {
     if (e.blobId && !porBlob.has(e.blobId)) porBlob.set(e.blobId, e);
   }
 
+  // obras archivadas: sus archivos no se suben ni se bajan (se guardan fuera de Drive)
+  const archivadas = new Set([...obrasM.values()].filter((o) => o.archivada).map((o) => o.id));
+
   const subir = [];      // {blobId, nombre, carpetaId, blob}
   const bajar = [];      // {blobId, fileId, nombre, entry}
   const mover = [];      // {fileId, nombre, destinoId, origenId}
@@ -387,6 +390,13 @@ export async function sincronizar(onProgreso = () => {}) {
   for (const [blobId, entry] of porBlob) {
     revisados++;
     if (revisados % 25 === 0) onProgreso(`Ordenando archivos… ${revisados}/${porBlob.size}`);
+
+    // obra archivada: se deja como está, no se toca Drive
+    if (archivadas.has(entry.obraId)) {
+      const previo = metaRemota.get(blobId);
+      if (previo) metaSalida.set(blobId, previo);
+      continue;
+    }
 
     const obra = obrasM.get(entry.obraId);
     // las fotos van a una subcarpeta "Fotos"; el resto (PDF, etc.) a la raíz de la obra

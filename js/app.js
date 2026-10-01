@@ -97,6 +97,21 @@ async function reload() {
   inbox = (await db.getAll('inbox')).sort((a, b) => String(b.creado || '').localeCompare(String(a.creado || '')));
 }
 
+// Borra los archivos de una obra solo de este dispositivo (siguen en Drive).
+async function liberarEspacioObra(obraId) {
+  let n = 0;
+  for (const e of entriesOf(obraId)) {
+    if (!e.blobId) continue;
+    const b = await db.get('blobs', e.blobId);
+    if (!b) continue;
+    const u = urlCache.get(e.blobId);
+    if (u) { URL.revokeObjectURL(u); urlCache.delete(e.blobId); }
+    await db.del('blobs', e.blobId);
+    n++;
+  }
+  return n;
+}
+
 async function blobUrl(id) {
   if (!id) return null;
   if (urlCache.has(id)) return urlCache.get(id);
@@ -135,6 +150,11 @@ function obraDialog(existing) {
       </select>
     </label>
     <label>Notas<textarea id="f_notas" placeholder="Detalles, teléfonos, observaciones…">${esc(o.notas || '')}</textarea></label>
+    ${existing ? `<div class="archbox">
+      <label class="checkline"><input type="checkbox" id="f_arch" ${o.archivada ? 'checked' : ''}> <span>Obra <b>archivada</b> — sus archivos no se sincronizan con Drive</span></label>
+      <p class="hint">Úsalo cuando termines la obra y quieras guardar las fotos fuera de Drive para liberar espacio. Al desmarcarlo y devolver la carpeta a Drive, todo vuelve a su sitio.</p>
+      ${o.archivada ? '<button class="btn" id="f_liberar" type="button">Liberar espacio en este dispositivo</button>' : ''}
+    </div>` : ''}
     <div class="modalactions">
       ${existing ? '<button class="btn danger" id="f_del">Borrar obra</button>' : ''}
       <button class="btn" id="f_cancel">Cancelar</button>
@@ -144,12 +164,14 @@ function obraDialog(existing) {
     m.querySelector('#f_save').onclick = async () => {
       const nombre = m.querySelector('#f_nombre').value.trim();
       if (!nombre) { alert('Pon un nombre a la obra.'); return; }
+      const chk = m.querySelector('#f_arch');
       const data = {
         nombre,
         cliente: m.querySelector('#f_cliente').value.trim(),
         direccion: m.querySelector('#f_direccion').value.trim(),
         estado: m.querySelector('#f_estado').value,
         notas: m.querySelector('#f_notas').value.trim(),
+        archivada: chk ? chk.checked : false,
       };
       if (existing) {
         await db.put('obras', { ...existing, ...data, actualizado: new Date().toISOString() });
@@ -157,6 +179,12 @@ function obraDialog(existing) {
         await db.put('obras', { id: uid(), ...data, creado: new Date().toISOString(), actualizado: new Date().toISOString() });
       }
       await reload(); closeModal(); route();
+    };
+    const lib = m.querySelector('#f_liberar');
+    if (lib) lib.onclick = async () => {
+      if (!confirm('Se borrarán las fotos y PDFs de esta obra SOLO de este dispositivo.\n\nAsegúrate de tenerlos guardados fuera de Drive antes de continuar.\n\n¿Continuar?')) return;
+      const n = await liberarEspacioObra(existing.id);
+      alert(`Liberados ${n} archivo(s) de este dispositivo.\n\nSiguen guardados en Drive y puedes volver a bajarlos cuando quieras.`);
     };
     const del = m.querySelector('#f_del');
     if (del) del.onclick = async () => {
@@ -457,9 +485,13 @@ async function renderObras() {
 
 async function entryHtml(e) {
   let body = '';
+  const obraDe = obras.find((x) => x.id === e.obraId);
+  const sinArchivo = obraDe && obraDe.archivada
+    ? '<em>📦 Archivada — este archivo no está en el dispositivo</em>'
+    : '<em>Archivo no disponible en este dispositivo</em>';
   if (e.tipo === 'foto') {
     const u = await blobUrl(e.blobId);
-    body = u ? `<img class="entryimg" src="${u}" alt="" loading="lazy">` : '<em>Imagen no disponible</em>';
+    body = u ? `<img class="entryimg" src="${u}" alt="" loading="lazy">` : sinArchivo;
   } else if (e.tipo === 'pdf') {
     const u = await blobUrl(e.blobId);
     const nom = e.nombre || 'documento.pdf';
@@ -470,7 +502,7 @@ async function entryHtml(e) {
            <a class="minibtn" href="${u}" download="${esc(nom)}">descargar</a>
          </div>
          <div class="pdfbox" id="pdf_${e.id}" hidden></div>`
-      : '<em>PDF no disponible</em>';
+      : sinArchivo;
   } else if (e.tipo === 'enlace') {
     body = `<a class="filelink" href="${esc(e.url)}" target="_blank" rel="noopener">🔗 ${esc(e.url)}</a>`;
   } else {
@@ -510,7 +542,7 @@ async function renderObra(id) {
     <section class="obrahead">
       <h2>${esc(o.nombre)}</h2>
       <div class="meta">
-        ${o.estado ? `<span class="chip">${esc(o.estado)}</span>` : ''}
+        ${o.estado ? `<span class="chip">${esc(o.estado)}</span>` : ''}${o.archivada ? '<span class="chip">📦 Archivada</span>' : ''}
         ${o.cliente ? esc(o.cliente) + ' · ' : ''}${esc(o.direccion || '')}
       </div>
       ${o.notas ? `<div class="notas">${esc(o.notas)}</div>` : ''}
