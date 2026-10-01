@@ -223,6 +223,16 @@ async function api(url, opts = {}, reintento = true) {
   return r;
 }
 
+// Escrituras internas del motor: no cuentan como cambios del usuario.
+async function metaPut(obj) {
+  db.pausarAvisos(true);
+  try { await db.put('meta', obj); } finally { db.pausarAvisos(false); }
+}
+async function metaDel(k) {
+  db.pausarAvisos(true);
+  try { await db.del('meta', k); } finally { db.pausarAvisos(false); }
+}
+
 async function listar(q) {
   const out = [];
   let pageToken = '';
@@ -383,24 +393,38 @@ async function descargar(fileId) {
   return r.blob();
 }
 
-async function escribirDatos(texto) {
+let datosFileId = null;
+
+async function localizarDatos() {
+  if (datosFileId) return datosFileId;
   const q = `name='${FICHERO_DATOS}' and trashed=false and '${carpetaId}' in parents`;
   const f = await listar(q);
-  const blob = new Blob([texto], { type: 'application/json' });
-  if (f.length) return reemplazar(f[0].id, blob);
-  return subirNuevo(FICHERO_DATOS, blob, carpetaId);
+  datosFileId = f.length ? f[0].id : null;
+  return datosFileId;
 }
 
-async function leerDatos() {
-  const q = `name='${FICHERO_DATOS}' and trashed=false and '${carpetaId}' in parents`;
-  const f = await listar(q);
-  if (!f.length) return null;
+async function escribirDatos(texto) {
+  const id = await localizarDatos();
+  const blob = new Blob([texto], { type: 'application/json' });
+  if (id) await reemplazar(id, blob);
+  else datosFileId = await subirNuevo(FICHERO_DATOS, blob, carpetaId);
+  // anotar la fecha del servidor para no volver a bajarlo sin necesidad
   try {
-    const txt = await (await descargar(f[0].id)).text();
-    return JSON.parse(txt);
-  } catch (_) {
-    return null;
-  }
+    const m = await (await api(`${API}/files/${datosFileId}?fields=modifiedTime`)).json();
+    await metaPut({ k: 'drive_datos_mtime', valor: m.modifiedTime });
+  } catch (_) { /* si falla, se bajará una vez más */ }
+}
+
+// Devuelve los datos del índice, o {__sinCambios:true} si no ha cambiado en Drive.
+async function leerDatos(forzar) {
+  const id = await localizarDatos();
+  if (!id) { await metaDel('drive_datos_mtime'); return null; }
+  const m = await (await api(`${API}/files/${id}?fields=modifiedTime`)).json();
+  const guardado = await db.get('meta', 'drive_datos_mtime');
+  if (!forzar && guardado && guardado.valor === m.modifiedTime) return { __sinCambios: true };
+  const txt = await (await descargar(id)).text();
+  await metaPut({ k: 'drive_datos_mtime', valor: m.modifiedTime });
+  try { return JSON.parse(txt); } catch (_) { return null; }
 }
 
 /* ------------------------------- mezcla ------------------------------- */
@@ -436,7 +460,14 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
   await asegurarCarpeta();
 
   onProgreso('Leyendo estado remoto…');
-  const remoto = await leerDatos();
+  // Si sabemos que no hay cambios locales, basta con preguntar la fecha del índice.
+  const hayCambiosLocales = opts.sinCambiosLocales !== false;
+  const remoto = await leerDatos(hayCambiosLocales);
+  if (remoto && remoto.__sinCambios) {
+    const sello = new Date().toISOString();
+    await metaPut({ k: 'drive_ultima', valor: sello });
+    return { sello, sinCambios: true, obras: 0, entries: 0, subidos: 0, bajados: 0, movidos: 0, papelera: 0 };
+  }
 
   const [obrasL, entriesL, blobsL, metaBorrados] = await Promise.all([
     db.getAll('obras'),
@@ -512,7 +543,7 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
     const salida = JSON.parse(cuerpo);
     salida.generado = new Date().toISOString();
     await escribirDatos(JSON.stringify(salida));
-    await db.put('meta', { k: 'drive_hash', valor: h });
+    await metaPut({ k: 'drive_hash', valor: h });
     return true;
   }
 
@@ -520,15 +551,15 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
   try {
     onProgreso('Guardando índice en Drive…');
     await escribirIndiceSiCambia();
-    await db.put('meta', { k: 'borrados', lista: borradosM });
-    await db.put('meta', { k: 'drive_ultima', valor: new Date().toISOString() });
+    await metaPut({ k: 'borrados', lista: borradosM });
+    await metaPut({ k: 'drive_ultima', valor: new Date().toISOString() });
     // Referencias conocidas YA: así la app puede ofrecer "descargar" aunque el
     // trabajo de archivos tarde o falle.
     const refsIniciales = {};
     for (const m of metaSalida.values()) {
       if (m.file) refsIniciales[m.id] = { file: m.file, nombre: m.nombre || '', tipo: m.tipo || '' };
     }
-    await db.put('meta', { k: 'drive_blobs', valor: refsIniciales });
+    await metaPut({ k: 'drive_blobs', valor: refsIniciales });
   } finally {
     db.pausarAvisos(false);
   }
@@ -558,7 +589,7 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
   const arbol = necesitoArbol ? await listarArbol() : [];
   if (necesitoArbol) {
     for (const f of arbol) if (f.carpeta) carpetasObra.set('n:' + f.carpeta, f.carpetaId);
-    await db.del('meta', 'forzar_escaneo');
+    await metaDel('forzar_escaneo');
   }
   const porNombre = new Map(arbol.map((f) => [f.name, f]));           // esquema antiguo: nombre == blobId
   const porId = new Map(arbol.map((f) => [f.id, f]));
@@ -754,7 +785,7 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
     fallosArchivos++;
   }
   if (fallosArchivos) {
-    await db.put('meta', { k: 'forzar_escaneo', valor: Date.now() });
+    await metaPut({ k: 'forzar_escaneo', valor: Date.now() });
     fallosArchivos = 0;
   }
 
@@ -766,9 +797,9 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
     for (const m of metaSalida.values()) {
       if (m.file) mapaRemoto[m.id] = { file: m.file, nombre: m.nombre || '', tipo: m.tipo || '' };
     }
-    await db.put('meta', { k: 'drive_blobs', valor: mapaRemoto });
-    await db.put('meta', { k: 'borrados', lista: borradosM });
-    await db.put('meta', { k: 'drive_ultima', valor: new Date().toISOString() });
+    await metaPut({ k: 'drive_blobs', valor: mapaRemoto });
+    await metaPut({ k: 'borrados', lista: borradosM });
+    await metaPut({ k: 'drive_ultima', valor: new Date().toISOString() });
   } catch (err) {
     console.warn('Chronos: no se pudieron anotar los fileId en el índice', err);
   } finally {

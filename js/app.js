@@ -1015,6 +1015,8 @@ let syncPendiente = false;
 let ultimoError = null;
 let syncInicio = 0;
 let progresoActual = '';
+let versionLocal = 0;         // sube con cada cambio del usuario
+let versionSincronizada = 0;  // hasta dónde se ha subido
 
 // registro de actividad, para poder diagnosticar sin adivinar
 const registro = [];
@@ -1041,6 +1043,7 @@ async function sincronizarDrive(opts = {}) {
     if (!silencioso) alert('Falta el Client ID de Google.\n\nHay que rellenar CLIENT_ID en js/config.js.');
     return;
   }
+  const vSnapshot = versionLocal;
   sincronizando = true;
   syncInicio = Date.now();
   progresoActual = 'Conectando con Drive…';
@@ -1063,14 +1066,20 @@ async function sincronizarDrive(opts = {}) {
     }, {
       bajoDemanda: ajustes.bajoDemanda,
       interactivo: !silencioso,
+      sinCambiosLocales: versionLocal <= versionSincronizada,
       // El índice ya está a salvo: refrescamos la pantalla para que se vea al instante
       onIndice: async () => { await reload(); route(); },
     });
+    versionSincronizada = vSnapshot;      // lo que ya está subido (lo posterior sigue pendiente)
     await reload();
     route();
     progresoActual = '';
-    anota(`OK · obras ${r.obras} · entradas ${r.entries} · subidos ${r.subidos} · bajados ${r.bajados}${r.papelera ? ' · papelera ' + r.papelera : ''}`);
-    if (!silencioso) {
+    anota(r.sinCambios
+      ? 'OK · sin cambios en Drive'
+      : `OK · obras ${r.obras} · entradas ${r.entries} · subidos ${r.subidos} · bajados ${r.bajados}${r.papelera ? ' · papelera ' + r.papelera : ''}`);
+    if (!silencioso && r.sinCambios) {
+      alert('Sin cambios: todo estaba al día.');
+    } else if (!silencioso) {
       const extra = r.movidos ? `\nArchivos reorganizados: ${r.movidos}` : '';
       const pap = r.papelera ? `\nEnviados a la papelera de Drive: ${r.papelera}` : '';
       alert(`Sincronizado con Drive.\n\nObras: ${r.obras}\nEntradas: ${r.entries}\nArchivos subidos: ${r.subidos}\nArchivos bajados: ${r.bajados}${extra}${pap}`);
@@ -1480,7 +1489,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal
 
 // Sincronización automática: al cambiar datos, al recuperar red y al volver a la app.
 let sucio = false;   // hay cambios locales que aún no han subido a Drive
-db.onWrite(() => { sucio = true; programarSync(); pintarEstadoSync(); });
+db.onWrite(() => { versionLocal++; sucio = true; programarSync(); pintarEstadoSync(); });
 document.getElementById('syncBar').onclick = () => { if (!sincronizando) sincronizarDrive(); };
 window.addEventListener('online', () => programarSync(2000));
 document.addEventListener('visibilitychange', async () => {
@@ -1526,7 +1535,7 @@ async function init() {
     if (!ajustes.autoSync || !drive.configurado()) return;
     if (sincronizando) return;
     const u = await drive.ultimaSync();
-    if (minutosDesde(u) > 5) programarSync(1000);
-  }, 5 * 60 * 1000);
+    if (minutosDesde(u) > 1) programarSync(1000);   // sondeo barato: 1 petición pequeña
+  }, 60 * 1000);
 }
 init();
