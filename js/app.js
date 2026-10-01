@@ -22,6 +22,8 @@ let filtro = '';
 let visibles = 60;
 let obraActual = null;
 let seleccionInbox = new Set();
+let seleccionObra = new Set();
+let modoSeleccion = false;
 let blobsRemotos = {};   // blobId -> {file, nombre, tipo} en Drive (modo bajo demanda)
 const urlCache = new Map();
 
@@ -504,7 +506,10 @@ async function renderObras() {
   view.innerHTML = list.length ? secciones.join('') : `<div class="empty"><p>Nada coincide con “${esc(filtro)}”.</p></div>`;
 }
 
-async function entryHtml(e) {
+async function entryHtml(e, selMode) {
+  const casilla = selMode
+    ? `<input type="checkbox" class="pick" data-pick="${esc(e.id)}" ${seleccionObra.has(e.id) ? 'checked' : ''}>`
+    : '';
   let body = '';
   const obraDe = obras.find((x) => x.id === e.obraId);
   const sinArchivo = obraDe && obraDe.archivada
@@ -537,7 +542,8 @@ async function entryHtml(e) {
     : '';
   const chips = `${e.zona ? `<span class="chip">${esc(e.zona)}</span>` : ''}${e.estado ? `<span class="chip">${esc(e.estado)}</span>` : ''}`;
   const caption = (e.tipo !== 'comentario' && e.texto) ? `<div class="comment" style="margin-bottom:6px">${esc(e.texto)}</div>` : '';
-  return `<article class="entry">
+  return `<article class="entry${selMode ? ' selmode' : ''}">
+    ${casilla}
     <div class="entrybody">
       ${caption}${body}
       <div class="entrymeta">
@@ -559,9 +565,10 @@ async function renderObra(id) {
   setActiveTab('');
 
   const es = entriesOf(id);
-  if (obraActual !== id) { obraActual = id; visibles = 60; }
+  if (obraActual !== id) { obraActual = id; visibles = 60; modoSeleccion = false; seleccionObra.clear(); }
+  seleccionObra = new Set([...seleccionObra].filter((x) => es.some((e) => e.id === x)));
   const mostradas = es.slice(0, visibles);
-  const blocks = await Promise.all(mostradas.map((e) => entryHtml(e)));
+  const blocks = await Promise.all(mostradas.map((e) => entryHtml(e, modoSeleccion)));
   view.innerHTML = `
     <section class="obrahead">
       <h2>${esc(o.nombre)}</h2>
@@ -571,22 +578,64 @@ async function renderObra(id) {
       </div>
       ${o.notas ? `<div class="notas">${esc(o.notas)}</div>` : ''}
       <div class="rowbtns">
+        <button class="btn${modoSeleccion ? ' primary' : ''}" id="b_sel">${modoSeleccion ? 'Salir de selección' : 'Seleccionar'}</button>
         <button class="btn" id="b_edit">Editar</button>
         <button class="btn" id="b_share">Compartir resumen</button>
       </div>
     </section>
     ${es.length ? `<div class="entries">${blocks.join('')}</div>` : `<div class="empty"><p>Aún no hay nada en esta obra. Usa <b>📷 Foto</b> o <b>💬 Comentario</b> aquí abajo.</p></div>`}
     ${es.length > visibles ? `<div style="text-align:center;margin-top:14px"><button class="btn" id="b_more">Mostrar más (${es.length - visibles} restantes)</button></div>` : ''}
-    <div class="obrabar">
+    ${modoSeleccion ? `<div class="obrabar sel">
+      <span class="obcup"><b id="ob_count">${seleccionObra.size}</b> seleccionada(s)</span>
+      <button class="btn primary" id="ob_mover">Mover a…</button>
+      <button class="btn danger" id="ob_del">Borrar</button>
+      <button class="btn" id="ob_cancelar">Salir</button>
+    </div>` : `<div class="obrabar">
       <button class="btn primary" id="ob_foto">📷 Foto</button>
       <button class="btn" id="ob_com">💬 Comentario</button>
       <button class="btn mas" id="ob_mas" aria-label="Más opciones">＋</button>
-    </div>
+    </div>`}
     <div style="height:62px"></div>
   `;
-  view.querySelector('#ob_foto').onclick = () => pickFiles('image/*', 'environment', (fs) => addFiles(id, fs, 'foto'));
-  view.querySelector('#ob_com').onclick = () => commentDialog(id);
-  view.querySelector('#ob_mas').onclick = () => entryMenu(id);
+  const bsel = view.querySelector('#b_sel');
+  if (bsel) bsel.onclick = () => { modoSeleccion = !modoSeleccion; seleccionObra.clear(); renderObra(id); };
+  const bFoto = view.querySelector('#ob_foto');
+  if (bFoto) bFoto.onclick = () => pickFiles('image/*', 'environment', (fs) => addFiles(id, fs, 'foto'));
+  const bCom = view.querySelector('#ob_com');
+  if (bCom) bCom.onclick = () => commentDialog(id);
+  const bMas = view.querySelector('#ob_mas');
+  if (bMas) bMas.onclick = () => entryMenu(id);
+  const bCancelar = view.querySelector('#ob_cancelar');
+  if (bCancelar) bCancelar.onclick = () => { modoSeleccion = false; seleccionObra.clear(); renderObra(id); };
+  const bMover = view.querySelector('#ob_mover');
+  if (bMover) bMover.onclick = () => {
+    if (!seleccionObra.size) { alert('Marca al menos una entrada.'); return; }
+    const n = seleccionObra.size;
+    elegirObra(async (destino) => {
+      const movidas = await moverEntradas([...seleccionObra], destino);
+      seleccionObra.clear();
+      modoSeleccion = false;
+      await reload();
+      alert(`Movidas ${movidas} de ${n} entrada(s) a "${(obras.find((x) => x.id === destino) || {}).nombre || ''}".`);
+      location.hash = obraHash(destino);
+    });
+  };
+  const bDel = view.querySelector('#ob_del');
+  if (bDel) bDel.onclick = async () => {
+    if (!seleccionObra.size) { alert('Marca al menos una entrada.'); return; }
+    if (!confirm(`¿Borrar ${seleccionObra.size} entrada(s) de esta obra?\n\nLos archivos irán a la papelera de Drive (recuperables 30 días).`)) return;
+    for (const eid of [...seleccionObra]) {
+      const e = entries.find((x) => x.id === eid);
+      if (!e) continue;
+      if (e.blobId) await db.del('blobs', e.blobId);
+      await db.del('entries', e.id);
+      await marcarBorrado(e.id, 'entry');
+    }
+    seleccionObra.clear();
+    modoSeleccion = false;
+    await reload();
+    route();
+  };
   view.querySelector('#b_edit').onclick = () => obraDialog(o);
   view.querySelector('#b_share').onclick = () => shareResumen(o);
   const more = view.querySelector('#b_more');
@@ -1025,6 +1074,20 @@ function anota(msg) {
   if (registro.length > 400) registro.shift();
 }
 
+// Mueve entradas (fotos, comentarios, PDFs, enlaces) a otra obra.
+async function moverEntradas(ids, obraIdDestino) {
+  let n = 0;
+  for (const id of ids) {
+    const e = entries.find((x) => x.id === id);
+    if (!e || e.obraId === obraIdDestino) continue;
+    e.obraId = obraIdDestino;
+    e.actualizado = new Date().toISOString();
+    await db.put('entries', e);
+    n++;
+  }
+  return n;
+}
+
 // Marca un registro como borrado para que la sincronización lo propague.
 async function marcarBorrado(id, tipo) {
   const m = (await db.get('meta', 'borrados')) || { k: 'borrados', lista: [] };
@@ -1411,10 +1474,19 @@ function route() {
 /* ============================ eventos ============================ */
 view.addEventListener('change', (ev) => {
   const c = ev.target.closest('input[data-sel]');
-  if (!c) return;
-  if (c.checked) seleccionInbox.add(c.dataset.sel);
-  else seleccionInbox.delete(c.dataset.sel);
-  barraInbox();
+  if (c) {
+    if (c.checked) seleccionInbox.add(c.dataset.sel);
+    else seleccionInbox.delete(c.dataset.sel);
+    barraInbox();
+    return;
+  }
+  const p = ev.target.closest('input[data-pick]');
+  if (p) {
+    if (p.checked) seleccionObra.add(p.dataset.pick);
+    else seleccionObra.delete(p.dataset.pick);
+    const cnt = document.getElementById('ob_count');
+    if (cnt) cnt.textContent = seleccionObra.size;
+  }
 });
 
 view.addEventListener('click', async (ev) => {
