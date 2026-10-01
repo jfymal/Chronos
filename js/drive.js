@@ -351,18 +351,54 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
     if (e && tiempo(b) > tiempo(e)) entriesM.delete(b.id);
   }
 
-  onProgreso('Guardando cambios locales…');
-  for (const o of obrasM.values()) await db.put('obras', o);
-  for (const e of entriesM.values()) await db.put('entries', e);
-  for (const b of borradosM) {
-    if (b.tipo === 'obra' && !obrasM.has(b.id)) await db.del('obras', b.id);
-    if (b.tipo === 'entry' && !entriesM.has(b.id)) {
-      const local = await db.get('entries', b.id);
-      if (local && local.blobId) await db.del('blobs', local.blobId);
-      await db.del('entries', b.id);
+  // Escrituras del propio motor: no cuentan como cambios del usuario
+  db.pausarAvisos(true);
+  try {
+    onProgreso('Guardando cambios locales…');
+    for (const o of obrasM.values()) await db.put('obras', o);
+    for (const e of entriesM.values()) await db.put('entries', e);
+    for (const b of borradosM) {
+      if (b.tipo === 'obra' && !obrasM.has(b.id)) await db.del('obras', b.id);
+      if (b.tipo === 'entry' && !entriesM.has(b.id)) {
+        const local = await db.get('entries', b.id);
+        if (local && local.blobId) await db.del('blobs', local.blobId);
+        await db.del('entries', b.id);
+      }
     }
+  } finally {
+    db.pausarAvisos(false);
   }
-  // --- archivos ---
+
+  // --- 1) EL ÍNDICE PRIMERO: los cambios llegan a Drive en segundos, ---------
+  //        pase lo que pase después con los archivos.
+  const blobsEnUso = new Set([...entriesM.values()].filter((e) => e.blobId).map((e) => e.blobId));
+  let metaSalida = new Map(
+    (((remoto && remoto.blobs) || []))
+      .filter((b) => blobsEnUso.has(b.id))
+      .map((b) => [b.id, b])
+  );
+  const construirIndice = () => JSON.stringify({
+    app: 'obras',
+    version: 2,
+    generado: new Date().toISOString(),
+    obras: [...obrasM.values()],
+    entries: [...entriesM.values()],
+    blobs: [...metaSalida.values()],
+    borrados: borradosM,
+  });
+
+  db.pausarAvisos(true);
+  try {
+    onProgreso('Guardando índice en Drive…');
+    await escribirDatos(construirIndice());
+    await db.put('meta', { k: 'borrados', lista: borradosM });
+    await db.put('meta', { k: 'drive_ultima', valor: new Date().toISOString() });
+  } finally {
+    db.pausarAvisos(false);
+  }
+
+  // --- 2) Archivos. Protegido: un fallo aquí ya no impide que el índice suba. ---
+  async function trabajarArchivos() {
   onProgreso('Revisando archivos…');
   const arbol = await listarArbol();
   const porNombre = new Map(arbol.map((f) => [f.name, f]));           // esquema antiguo: nombre == blobId
@@ -385,7 +421,7 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
   const subir = [];      // {blobId, nombre, carpetaId, blob}
   const bajar = [];      // {blobId, fileId, nombre, entry}
   const mover = [];      // {fileId, nombre, destinoId, origenId}
-  const metaSalida = new Map(); // blobId -> {id, nombre, tipo, file}
+  // metaSalida viene de fuera, ya sembrado con las referencias conocidas
 
   let revisados = 0;
   for (const [blobId, entry] of porBlob) {
@@ -537,37 +573,47 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
     });
   }
 
-  await db.put('meta', { k: 'borrados', lista: borradosM });
-
-  onProgreso('Guardando índice en Drive…');
-  const salida = {
-    app: 'obras',
-    version: 2,
-    generado: new Date().toISOString(),
-    obras: [...obrasM.values()],
-    entries: [...entriesM.values()],
-    blobs: [...metaSalida.values()],
-    borrados: borradosM,
-  };
-  await escribirDatos(JSON.stringify(salida));
-
-  // referencia local de dónde está cada archivo en Drive (para descargar a demanda)
-  const mapaRemoto = {};
-  for (const m of metaSalida.values()) {
-    if (m.file) mapaRemoto[m.id] = { file: m.file, nombre: m.nombre || '', tipo: m.tipo || '' };
-  }
-  await db.put('meta', { k: 'drive_blobs', valor: mapaRemoto });
-
-  const sello = new Date().toISOString();
-  await db.put('meta', { k: 'drive_ultima', valor: sello });
   return {
-    sello,
-    obras: obrasM.size,
-    entries: entriesM.size,
     subidos: subir.length,
     bajados: bajar.length,
     movidos: mover.length,
     papelera: aPapeleraN,
+  };
+  }  // fin de trabajarArchivos()
+
+  // --- 3) Los archivos, aislados: si fallan, el índice ya está a salvo ---
+  let res = { subidos: 0, bajados: 0, movidos: 0, papelera: 0 };
+  try {
+    res = await trabajarArchivos();
+  } catch (err) {
+    console.warn('Chronos: fallo en la parte de archivos (el índice sí se subió)', err);
+  }
+
+  // --- 4) Anotar los fileId definitivos en el índice (mejor esfuerzo) ---
+  db.pausarAvisos(true);
+  try {
+    await escribirDatos(construirIndice());
+    const mapaRemoto = {};
+    for (const m of metaSalida.values()) {
+      if (m.file) mapaRemoto[m.id] = { file: m.file, nombre: m.nombre || '', tipo: m.tipo || '' };
+    }
+    await db.put('meta', { k: 'drive_blobs', valor: mapaRemoto });
+    await db.put('meta', { k: 'borrados', lista: borradosM });
+    await db.put('meta', { k: 'drive_ultima', valor: new Date().toISOString() });
+  } catch (err) {
+    console.warn('Chronos: no se pudieron anotar los fileId en el índice', err);
+  } finally {
+    db.pausarAvisos(false);
+  }
+
+  return {
+    sello: new Date().toISOString(),
+    obras: obrasM.size,
+    entries: entriesM.size,
+    subidos: res.subidos,
+    bajados: res.bajados,
+    movidos: res.movidos,
+    papelera: res.papelera,
   };
 }
 

@@ -26,8 +26,14 @@ export function openDB() {
 
 // Aviso de escritura: permite a la app programar una sincronización al cambiar datos.
 let _onWrite = null;
+let _pausado = 0;
 export function onWrite(cb) { _onWrite = cb; }
-function avisarEscritura() { if (_onWrite) { try { _onWrite(); } catch (_) { /* no romper la escritura */ } } }
+// Pausa los avisos mientras el motor de sincronización escribe sus propios datos.
+export function pausarAvisos(on) { _pausado += on ? 1 : -1; if (_pausado < 0) _pausado = 0; }
+function avisarEscritura() {
+  if (_pausado > 0) return;
+  if (_onWrite) { try { _onWrite(); } catch (_) { /* no romper la escritura */ } }
+}
 
 const reqP = (r) => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
 const txDone = (t) => new Promise((res, rej) => { t.oncomplete = () => res(); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); });

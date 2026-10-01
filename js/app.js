@@ -1006,6 +1006,8 @@ async function checkReminders() {
 
 /* ============================ sincronización con Drive ============================ */
 let sincronizando = false;
+let syncPendiente = false;
+let ultimoError = null;
 
 // Marca un registro como borrado para que la sincronización lo propague.
 async function marcarBorrado(id, tipo) {
@@ -1026,6 +1028,10 @@ async function sincronizarDrive(opts = {}) {
     return;
   }
   sincronizando = true;
+  ultimoError = null;
+  // Se marca limpio AHORA: si algo se escribe durante la sincronización,
+  // volverá a marcarse como sucio y se re-encolará.
+  sucio = false;
   if (!silencioso) closeModal();
   const tituloPrevio = pageTitle.textContent;
   if (!silencioso) pageTitle.textContent = 'Conectando con Drive…';
@@ -1035,7 +1041,6 @@ async function sincronizarDrive(opts = {}) {
       if (!silencioso) pageTitle.textContent = msg;
       else if (syncBtn) syncBtn.title = msg;
     }, { bajoDemanda: ajustes.bajoDemanda });
-    sucio = false;
     await reload();
     route();
     if (!silencioso) {
@@ -1044,7 +1049,9 @@ async function sincronizarDrive(opts = {}) {
       alert(`Sincronizado con Drive.\n\nObras: ${r.obras}\nEntradas: ${r.entries}\nArchivos subidos: ${r.subidos}\nArchivos bajados: ${r.bajados}${extra}${pap}`);
     }
   } catch (err) {
-    console.error(err);
+    console.error('Chronos: error de sincronización', err);
+    ultimoError = { mensaje: (err && err.message) ? err.message : String(err), cuando: new Date().toISOString() };
+    sucio = true;                       // sigue habiendo cambios sin subir
     if (!silencioso) {
       closeModal();
       pageTitle.textContent = tituloPrevio;
@@ -1054,6 +1061,7 @@ async function sincronizarDrive(opts = {}) {
   } finally {
     sincronizando = false;
     refrescarBotonSync();
+    if (syncPendiente) { syncPendiente = false; programarSync(1200); }
   }
 }
 
@@ -1076,11 +1084,12 @@ function minutosDesde(iso) {
 function programarSync(retraso) {
   if (!ajustes.autoSync || !drive.configurado()) return;
   clearTimeout(syncTimer);
-  syncTimer = setTimeout(sincronizarAuto, retraso === undefined ? 25000 : retraso);
+  syncTimer = setTimeout(sincronizarAuto, retraso === undefined ? 5000 : retraso);
 }
 
 async function sincronizarAuto() {
-  if (sincronizando || !ajustes.autoSync || !drive.configurado()) return;
+  if (!ajustes.autoSync || !drive.configurado()) return;
+  if (sincronizando) { syncPendiente = true; return; }   // no se descarta: se re-encola al terminar
   if (!navigator.onLine) return;
   if (ajustes.soloWifi && !enWifi()) return;
   await sincronizarDrive({ silencioso: true });
@@ -1132,17 +1141,32 @@ function autoSyncDialog() {
 async function refrescarBotonSync() {
   if (!syncBtn) return;
   syncBtn.hidden = !drive.configurado();
-  if (drive.configurado()) {
-    const u = await drive.ultimaSync();
-    syncBtn.title = sucio ? 'Hay cambios sin subir — pulsa para sincronizar' : (u ? 'Sincronizado: ' + fmt(u) : 'Sincronizar con Drive');
-    syncBtn.textContent = sucio ? '☁︎' : '☁';
+  if (!drive.configurado()) return;
+  const u = await drive.ultimaSync();
+  if (ultimoError) {
+    syncBtn.textContent = '⚠';
+    syncBtn.title = 'Falló la sincronización: ' + ultimoError.mensaje + ' — pulsa para reintentar';
+  } else if (sucio) {
+    syncBtn.textContent = '☁︎';
+    syncBtn.title = 'Hay cambios sin subir — pulsa para sincronizar';
+  } else {
+    syncBtn.textContent = '☁';
+    syncBtn.title = u ? 'Sincronizado: ' + fmt(u) : 'Sincronizar con Drive';
   }
+}
+
+function estadoSyncTexto() {
+  if (ultimoError) return '⚠️ El último intento falló: ' + esc(ultimoError.mensaje) + ' (' + fmt(ultimoError.cuando) + ')';
+  if (sucio) return '☁︎ Hay cambios pendientes de subir. Pulsa el botón ☁ de la barra superior.';
+  if (!drive.configurado()) return 'Sincronización no configurada.';
+  return '☁ Todo sincronizado.';
 }
 
 /* ============================ ajustes ============================ */
 function settingsDialog() {
   openModal(`
     <h2>Ajustes</h2>
+    <p class="hint" style="margin:-6px 0 12px">${estadoSyncTexto()}</p>
     <div class="menu-list">
       <button id="s_notif">🔔 Activar notificaciones</button>
       <button id="s_calidad">🖼️ Calidad de las fotos</button>
