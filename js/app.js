@@ -846,7 +846,7 @@ async function shareResumen(o) {
 }
 
 /* ============================ editor de dibujo ============================ */
-const COLORES = ['#e11d48', '#2563eb', '#111827', '#f59e0b', '#16a34a', '#ffffff'];
+const COLORES = ['#111827', '#e11d48', '#2563eb', '#f59e0b', '#16a34a', '#ffffff'];  // negro por defecto
 const GROSORES = [2, 4, 8, 16];
 const NOMBRE_GROSOR = ['fino', 'medio', 'grueso', 'muy grueso'];
 
