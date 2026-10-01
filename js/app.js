@@ -1008,6 +1008,15 @@ async function checkReminders() {
 let sincronizando = false;
 let syncPendiente = false;
 let ultimoError = null;
+let syncInicio = 0;
+let progresoActual = '';
+
+// registro de actividad, para poder diagnosticar sin adivinar
+const registro = [];
+function anota(msg) {
+  registro.push(`${new Date().toLocaleTimeString('es-ES')}  ${msg}`);
+  if (registro.length > 400) registro.shift();
+}
 
 // Marca un registro como borrado para que la sincronización lo propague.
 async function marcarBorrado(id, tipo) {
@@ -1028,6 +1037,9 @@ async function sincronizarDrive(opts = {}) {
     return;
   }
   sincronizando = true;
+  syncInicio = Date.now();
+  progresoActual = 'Conectando con Drive…';
+  anota(silencioso ? '── Sincronización automática' : '── Sincronización manual');
   ultimoError = null;
   // Se marca limpio AHORA: si algo se escribe durante la sincronización,
   // volverá a marcarse como sucio y se re-encolará.
@@ -1038,11 +1050,20 @@ async function sincronizarDrive(opts = {}) {
   else if (syncBtn) syncBtn.title = 'Sincronizando…';
   try {
     const r = await drive.sincronizar((msg) => {
+      progresoActual = msg;
+      anota(msg);
       if (!silencioso) pageTitle.textContent = msg;
       else if (syncBtn) syncBtn.title = msg;
-    }, { bajoDemanda: ajustes.bajoDemanda, interactivo: !silencioso });
+    }, {
+      bajoDemanda: ajustes.bajoDemanda,
+      interactivo: !silencioso,
+      // El índice ya está a salvo: refrescamos la pantalla para que se vea al instante
+      onIndice: async () => { await reload(); route(); },
+    });
     await reload();
     route();
+    progresoActual = '';
+    anota(`OK · obras ${r.obras} · entradas ${r.entries} · subidos ${r.subidos} · bajados ${r.bajados}${r.papelera ? ' · papelera ' + r.papelera : ''}`);
     if (!silencioso) {
       const extra = r.movidos ? `\nArchivos reorganizados: ${r.movidos}` : '';
       const pap = r.papelera ? `\nEnviados a la papelera de Drive: ${r.papelera}` : '';
@@ -1051,6 +1072,8 @@ async function sincronizarDrive(opts = {}) {
   } catch (err) {
     console.error('Chronos: error de sincronización', err);
     ultimoError = { mensaje: (err && err.message) ? err.message : String(err), cuando: new Date().toISOString() };
+    anota('ERROR: ' + ultimoError.mensaje + (progresoActual ? ` (en: ${progresoActual})` : ''));
+    progresoActual = '';
     sucio = true;                       // sigue habiendo cambios sin subir
     if (!silencioso) {
       closeModal();
@@ -1155,23 +1178,49 @@ async function refrescarBotonSync() {
   }
 }
 
-function estadoSyncTexto() {
+async function estadoSyncTexto() {
+  if (sincronizando) {
+    const min = Math.round((Date.now() - syncInicio) / 60000);
+    return `⏳ Sincronizando${progresoActual ? ': ' + esc(progresoActual) : '…'}${min >= 1 ? ` (${min} min)` : ''}`;
+  }
   if (ultimoError) return '⚠️ El último intento falló: ' + esc(ultimoError.mensaje) + ' (' + fmt(ultimoError.cuando) + ')';
   if (sucio) return '☁︎ Hay cambios pendientes de subir. Pulsa el botón ☁ de la barra superior.';
   if (!drive.configurado()) return 'Sincronización no configurada.';
-  return '☁ Todo sincronizado.';
+  const u = await drive.ultimaSync();
+  return u ? '☁ Todo sincronizado. Última: ' + fmt(u) : '☁ Todo sincronizado.';
+}
+
+function registroDialog() {
+  const txt = registro.length ? registro.slice(-250).join('\n') : 'Sin actividad todavía.';
+  openModal(`
+    <h2>Registro de sincronización</h2>
+    <p class="hint">Últimas operaciones. Si algo falla, cópialo y me lo pasas: con esto dejo de adivinar.</p>
+    <textarea id="rg_txt" readonly style="min-height:260px;font-family:ui-monospace,monospace;font-size:.76rem;white-space:pre">${esc(txt)}</textarea>
+    <div class="modalactions">
+      <button class="btn" id="rg_copiar">Copiar</button>
+      <button class="btn primary" id="rg_close">Cerrar</button>
+    </div>`, (m) => {
+    m.querySelector('#rg_close').onclick = closeModal;
+    m.querySelector('#rg_copiar').onclick = async () => {
+      try { await navigator.clipboard.writeText(txt); alert('Registro copiado al portapapeles.'); }
+      catch (_) { alert('No se pudo copiar. Selecciona el texto y cópialo a mano.'); }
+    };
+  });
 }
 
 /* ============================ ajustes ============================ */
-function settingsDialog() {
+async function settingsDialog() {
+  const estado = await estadoSyncTexto();
   openModal(`
     <h2>Ajustes</h2>
-    <p class="hint" style="margin:-6px 0 12px">${estadoSyncTexto()}</p>
+    <p class="hint" style="margin:-6px 0 12px">${estado}</p>
     <div class="menu-list">
       <button id="s_notif">🔔 Activar notificaciones</button>
       <button id="s_calidad">🖼️ Calidad de las fotos</button>
       <button id="s_auto">🔁 Sincronización automática</button>
       <button id="s_descarga">📥 Descarga de archivos</button>
+      <button id="s_registro">📋 Registro de sincronización</button>
+      <button id="s_forzar">☁️ Sincronizar ahora</button>
       <button id="s_export">⬇️ Exportar copia de seguridad (.json)</button>
       <button id="s_import">⬆️ Importar copia de seguridad</button>
       <button id="s_migracion">📥 Importar migración de AppSheet (1 clic)</button>
@@ -1191,6 +1240,8 @@ function settingsDialog() {
     m.querySelector('#s_calidad').onclick = calidadDialog;
     m.querySelector('#s_auto').onclick = autoSyncDialog;
     m.querySelector('#s_descarga').onclick = descargaDialog;
+    m.querySelector('#s_registro').onclick = registroDialog;
+    m.querySelector('#s_forzar').onclick = () => sincronizarDrive();
     m.querySelector('#s_drive').onclick = sincronizarDrive;
   });
 }
@@ -1430,7 +1481,16 @@ async function init() {
   setInterval(checkReminders, 60000);
   // Cada 5 minutos, si hay algo pendiente y las condiciones lo permiten.
   setInterval(async () => {
+    // Vigilante: si una sincronización lleva colgada demasiado, se libera.
+    if (sincronizando && syncInicio && Date.now() - syncInicio > 12 * 60 * 1000) {
+      sincronizando = false;
+      progresoActual = '';
+      ultimoError = { mensaje: 'La sincronización se quedó colgada más de 12 minutos.', cuando: new Date().toISOString() };
+      anota('WATCHDOG: sincronización colgada, liberada');
+      refrescarBotonSync();
+    }
     if (!ajustes.autoSync || !drive.configurado()) return;
+    if (sincronizando) return;
     const u = await drive.ultimaSync();
     if (minutosDesde(u) > 5) programarSync(1000);
   }, 5 * 60 * 1000);

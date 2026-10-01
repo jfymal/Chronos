@@ -166,9 +166,26 @@ export function desconectar() {
 }
 
 /* ------------------------------- API ------------------------------- */
+// Todas las peticiones llevan tiempo máximo: si una se queda colgada, se corta
+// y la sincronización falla en vez de quedarse eternamente en curso.
 async function api(url, opts = {}, reintento = true) {
   const t = await pedirToken(false);
-  const r = await fetch(url, { ...opts, headers: { Authorization: 'Bearer ' + t, ...(opts.headers || {}) } });
+  const { timeout, ...resto } = opts;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeout || 60000);
+  let r;
+  try {
+    r = await fetch(url, {
+      ...resto,
+      signal: ctrl.signal,
+      headers: { Authorization: 'Bearer ' + t, ...(resto.headers || {}) },
+    });
+  } catch (e) {
+    clearTimeout(timer);
+    if (e && e.name === 'AbortError') throw new Error('Drive no respondió a tiempo (la conexión se quedó colgada).');
+    throw e;
+  }
+  clearTimeout(timer);
   if (r.status === 401 && reintento) {
     olvidarToken();
     return api(url, opts, false);
@@ -264,6 +281,7 @@ async function subirNuevo(nombre, blob, padre) {
     method: 'POST',
     headers: { 'Content-Type': 'multipart/related; boundary=' + boundary },
     body: cuerpo,
+    timeout: 300000,
   });
   return (await r.json()).id;
 }
@@ -273,6 +291,7 @@ async function reemplazar(fileId, blob) {
     method: 'PATCH',
     headers: { 'Content-Type': blob.type || 'application/octet-stream' },
     body: blob,
+    timeout: 300000,
   });
 }
 
@@ -306,7 +325,7 @@ async function aPapelera(fileId) {
 }
 
 async function descargar(fileId) {
-  const r = await api(`${API}/files/${fileId}?alt=media`);
+  const r = await api(`${API}/files/${fileId}?alt=media`, { timeout: 300000 });
   return r.blob();
 }
 
@@ -434,8 +453,19 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
     await escribirDatos(construirIndice());
     await db.put('meta', { k: 'borrados', lista: borradosM });
     await db.put('meta', { k: 'drive_ultima', valor: new Date().toISOString() });
+    // Referencias conocidas YA: así la app puede ofrecer "descargar" aunque el
+    // trabajo de archivos tarde o falle.
+    const refsIniciales = {};
+    for (const m of metaSalida.values()) {
+      if (m.file) refsIniciales[m.id] = { file: m.file, nombre: m.nombre || '', tipo: m.tipo || '' };
+    }
+    await db.put('meta', { k: 'drive_blobs', valor: refsIniciales });
   } finally {
     db.pausarAvisos(false);
+  }
+  // Avisar a la app para que refresque la pantalla con lo que ya está a salvo
+  if (typeof opts.onIndice === 'function') {
+    try { await opts.onIndice(); } catch (_) { /* no romper la sincronización */ }
   }
 
   // --- 2) Archivos. Protegido: un fallo aquí ya no impide que el índice suba. ---
