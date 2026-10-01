@@ -27,7 +27,7 @@ let modoSeleccion = false;
 let blobsRemotos = {};   // blobId -> {file, nombre, tipo} en Drive (modo bajo demanda)
 const urlCache = new Map();
 
-const AJUSTES_DEFECTO = { comprimir: true, maxDim: 1920, calidad: 0.82, autoSync: true, soloWifi: true, horaRecordatorio: '08:00', bajoDemanda: false };
+const AJUSTES_DEFECTO = { comprimir: true, maxDim: 1920, calidad: 0.82, autoSync: true, soloWifi: true, horaRecordatorio: '08:00', bajoDemanda: false, permitirDedo: false };
 let ajustes = { ...AJUSTES_DEFECTO };
 async function cargarAjustes() {
   const m = await db.get('meta', 'ajustes');
@@ -898,6 +898,8 @@ async function openEditor(obraId, baseEntry) {
       <button class="minibtn" id="ed-erase">🧽 borrador</button>
       <button class="minibtn" id="ed-undo">↶ deshacer</button>
       <button class="minibtn danger" id="ed-clear">borrar página</button>
+      <span class="ed-sep"></span>
+      <button class="minibtn" id="ed-dedo" title="Permitir dibujar con el dedo">🖐 dedo</button>
     </div>
     <div class="ed-canvas-wrap"><canvas id="ed-canvas" width="${W}" height="${H}"></canvas></div>
     <div class="ed-pages">
@@ -982,14 +984,36 @@ async function openEditor(obraId, baseEntry) {
   }
 
   canvas.addEventListener('contextmenu', (ev) => ev.preventDefault());
+  let vistoLapiz = false;
+  let permitirDedo = !!ajustes.permitirDedo;
+
+  // Contacto ancho = palma de la mano (un dedo ronda 20-30 px; una palma, bastante más)
+  function contactoAncho(ev) {
+    const w = ev.width || 0, h = ev.height || 0;
+    return Math.max(w, h) > 42;
+  }
+
   canvas.addEventListener('pointerdown', (ev) => {
-    if (ev.pointerType === 'pen') activePen.add(ev.pointerId);
-    if (ev.pointerType === 'touch' && activePen.size > 0) return;   // rechazo de palma
+    if (ev.pointerType === 'pen') {
+      vistoLapiz = true;
+      // Si la mano había empezado un trazo justo antes, se descarta
+      if (cur && cur.deMano) {
+        const idx = paginas[pag].strokes.indexOf(cur);
+        if (idx >= 0) paginas[pag].strokes.splice(idx, 1);
+        cur = null; drawing = false; redraw();
+      }
+      activePen.add(ev.pointerId);
+    }
+    if (ev.pointerType === 'touch') {
+      if (activePen.size > 0) return;                 // hay lápiz apoyado
+      if (!permitirDedo && vistoLapiz) return;        // ya sabemos que escribes con lápiz
+      if (contactoAncho(ev)) return;                  // contacto ancho: palma
+    }
     ev.preventDefault();
     try { canvas.setPointerCapture(ev.pointerId); } catch (_) { /* opcional */ }
     drawing = true;
     if (erase) { borrarEn(toCanvas(ev), radioBorrador()); redraw(); return; }
-    cur = { c: color, points: [toCanvas(ev)] };
+    cur = { c: color, points: [toCanvas(ev)], deMano: ev.pointerType === 'touch' };
     paginas[pag].strokes.push(cur);
     punto(ctx, cur.points[0], color);
   });
@@ -1036,6 +1060,13 @@ async function openEditor(obraId, baseEntry) {
   ov.querySelector('#ed-erase').addEventListener('click', (ev) => {
     erase = !erase;
     ev.currentTarget.classList.toggle('on', erase);
+  });
+  const bDedo = ov.querySelector('#ed-dedo');
+  if (permitirDedo) bDedo.classList.add('on');
+  bDedo.addEventListener('click', async (ev) => {
+    permitirDedo = !permitirDedo;
+    ev.currentTarget.classList.toggle('on', permitirDedo);
+    await guardarAjustes({ permitirDedo });
   });
   ov.querySelector('#ed-undo').addEventListener('click', () => { paginas[pag].strokes.pop(); redraw(); });
   ov.querySelector('#ed-clear').addEventListener('click', () => {
