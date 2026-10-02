@@ -596,12 +596,13 @@ async function renderObra(id) {
       <button class="btn primary" id="ob_mover">Mover a…</button>
       <button class="btn danger" id="ob_del">Borrar</button>
       <button class="btn" id="ob_cancelar">Salir</button>
-    </div>` : `<div class="obrabar">
-      <button class="btn primary" id="ob_foto">📷 Foto</button>
-      <button class="btn" id="ob_com">💬 Comentario</button>
-      <button class="btn mas" id="ob_mas" aria-label="Más opciones">＋</button>
+    </div>` : `<div class="acciones">
+      <button class="fab-mini mas" id="ob_mas" aria-label="Más opciones" title="Más opciones">＋</button>
+      <button class="fab-mini" id="ob_stylus" aria-label="Lienzo en blanco" title="Lienzo en blanco">✏️</button>
+      <button class="fab-mini" id="ob_com" aria-label="Comentario" title="Comentario">💬</button>
+      <button class="fab-mini principal" id="ob_foto" aria-label="Hacer foto" title="Hacer foto">📷</button>
     </div>`}
-    <div style="height:62px"></div>
+    <div style="height:${modoSeleccion ? 62 : 16}px"></div>
   `;
   const bsel = view.querySelector('#b_sel');
   if (bsel) bsel.onclick = () => { modoSeleccion = !modoSeleccion; seleccionObra.clear(); renderObra(id); };
@@ -609,6 +610,8 @@ async function renderObra(id) {
   if (bFoto) bFoto.onclick = () => pickFiles('image/*', 'environment', (fs) => addFiles(id, fs, 'foto'));
   const bCom = view.querySelector('#ob_com');
   if (bCom) bCom.onclick = () => commentDialog(id);
+  const bStylus = view.querySelector('#ob_stylus');
+  if (bStylus) bStylus.onclick = () => openEditor(id, null);
   const bMas = view.querySelector('#ob_mas');
   if (bMas) bMas.onclick = () => entryMenu(id);
   const bCancelar = view.querySelector('#ob_cancelar');
