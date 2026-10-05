@@ -262,18 +262,24 @@ function entryMenu(obraId) {
 }
 
 async function addFiles(obraId, files, tipo) {
+  let ultima = null;
   for (const f0 of files) {
     const f = tipo === 'foto' ? await prepararFoto(f0) : f0;
     const blobId = uid();
     await db.put('blobs', { id: blobId, blob: f, nombre: f.name || (tipo === 'foto' ? 'foto.jpg' : 'documento.pdf'), tipo: f.type });
-    await db.put('entries', {
+    const entrada = {
       id: uid(), obraId, tipo, blobId,
       nombre: f.name || (tipo === 'foto' ? 'foto.jpg' : 'documento.pdf'),
       texto: '', creado: new Date().toISOString(),
       recordatorio: null, notificado: false, completado: false,
-    });
+    };
+    await db.put('entries', entrada);
+    ultima = entrada;
   }
-  await reload(); route();
+  await reload();
+  route();
+  // si acabas de hacer UNA foto, ofrecer describirla enseguida
+  if (tipo === 'foto' && files.length === 1 && ultima) pieDialog(ultima.id);
 }
 
 function commentDialog(obraId) {
@@ -541,13 +547,16 @@ async function entryHtml(e, selMode) {
     ? `<span class="pill ${e.completado ? 'done' : (new Date(e.recordatorio).getTime() < Date.now() ? 'over' : '')}">⏰ ${fmt(e.recordatorio)}</span>`
     : '';
   const chips = `${e.zona ? `<span class="chip">${esc(e.zona)}</span>` : ''}${e.estado ? `<span class="chip">${esc(e.estado)}</span>` : ''}`;
-  const caption = (e.tipo !== 'comentario' && e.texto) ? `<div class="comment" style="margin-bottom:6px">${esc(e.texto)}</div>` : '';
+  // En las fotos, el texto va DEBAJO, como pie de foto
+  const pie = (e.tipo === 'foto' && e.texto) ? `<div class="pie">${esc(e.texto)}</div>` : '';
+  const caption = (e.tipo !== 'comentario' && e.tipo !== 'foto' && e.texto) ? `<div class="comment" style="margin-bottom:6px">${esc(e.texto)}</div>` : '';
   return `<article class="entry${selMode ? ' selmode' : ''}">
     ${casilla}
     <div class="entrybody">
-      ${caption}${body}
+      ${caption}${body}${pie}
       <div class="entrymeta">
         <span>${iconFor(e.tipo)} ${fmt(e.creado)}</span>${chips}${remPill}
+        ${e.tipo === 'foto' ? `<button class="minibtn" data-act="pie" data-id="${e.id}">${e.texto ? 'editar descripción' : 'describir'}</button>` : ''}
         ${e.tipo === 'foto' ? `<button class="minibtn" data-act="anotar" data-id="${e.id}">anotar</button>` : ''}
         <button class="minibtn" data-act="mover" data-id="${e.id}">mover de obra</button>
         <button class="minibtn" data-act="fijar" data-id="${e.id}">${e.fijado ? '📌 quitar' : '📌 fijar'}</button>
@@ -1201,6 +1210,35 @@ function anota(msg) {
   if (registro.length > 400) registro.shift();
 }
 
+// Descripción al pie de una foto.
+function pieDialog(entryId) {
+  const e = entries.find((x) => x.id === entryId);
+  if (!e) return;
+  openModal(`
+    <h2>Descripción de la foto</h2>
+    <p class="hint">Aparecerá debajo de la foto, para ir anotando lo que necesites.</p>
+    <label>Descripción
+      <textarea id="pie_txt" placeholder="Describe lo que quieras recordar de esta foto…">${esc(e.texto || '')}</textarea>
+    </label>
+    <div class="modalactions">
+      <button class="btn" id="pie_skip">Sin descripción</button>
+      <button class="btn primary" id="pie_save">Guardar</button>
+    </div>`, (m) => {
+    const area = m.querySelector('#pie_txt');
+    const guardar = async (texto) => {
+      e.texto = texto;
+      e.actualizado = new Date().toISOString();
+      await db.put('entries', e);
+      await reload();
+      closeModal();
+      route();
+    };
+    m.querySelector('#pie_save').onclick = () => guardar(area.value.trim());
+    m.querySelector('#pie_skip').onclick = () => guardar('');
+    setTimeout(() => area.focus(), 60);
+  });
+}
+
 // Mueve entradas (fotos, comentarios, PDFs, enlaces) a otra obra.
 async function moverEntradas(ids, obraIdDestino) {
   let n = 0;
@@ -1650,6 +1688,7 @@ view.addEventListener('click', async (ev) => {
     if (!w) alert('El navegador bloqueó la ventana.\n\nPermite las ventanas emergentes para esta web y vuelve a intentarlo.');
     return;
   }
+  if (act === 'pie') { pieDialog(id); return; }
   if (act === 'mover') {
     const e = entries.find((x) => x.id === id);
     if (!e) return;

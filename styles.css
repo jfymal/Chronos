@@ -391,3 +391,11 @@ body.editing { overflow: hidden; }
   background: #fff; border-radius: 8px; box-shadow: 0 6px 24px rgba(0, 0, 0, .45);
   cursor: crosshair; -webkit-user-select: none; user-select: none;
 }
+
+/* pie de foto */
+.pie {
+  margin-top: 8px; padding: 8px 10px;
+  border-left: 3px solid var(--accent);
+  background: var(--card2); border-radius: 0 8px 8px 0;
+  white-space: pre-wrap; font-size: .92rem; line-height: 1.4;
+}
