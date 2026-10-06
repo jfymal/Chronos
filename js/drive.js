@@ -469,10 +469,11 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
     return { sello, sinCambios: true, obras: 0, entries: 0, subidos: 0, bajados: 0, movidos: 0, papelera: 0 };
   }
 
-  const [obrasL, entriesL, blobsL, metaBorrados] = await Promise.all([
+  const [obrasL, entriesL, blobsL, inboxL, metaBorrados] = await Promise.all([
     db.getAll('obras'),
     db.getAll('entries'),
     db.getAll('blobs'),
+    db.getAll('inbox'),
     db.get('meta', 'borrados'),
   ]);
   const borradosL = (metaBorrados && metaBorrados.lista) || [];
@@ -480,6 +481,7 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
   // --- mezclar metadatos ---
   const obrasM = unir(obrasL, remoto && remoto.obras);
   const entriesM = unir(entriesL, remoto && remoto.entries);
+  const inboxM = unir(inboxL, remoto && remoto.inbox);
 
   const bMap = new Map();
   for (const b of (remoto && remoto.borrados) || []) bMap.set(b.id, b);
@@ -494,6 +496,8 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
     if (o && tiempo(b) > tiempo(o)) obrasM.delete(b.id);
     const e = entriesM.get(b.id);
     if (e && tiempo(b) > tiempo(e)) entriesM.delete(b.id);
+    const it = inboxM.get(b.id);
+    if (it && tiempo(b) > tiempo(it)) inboxM.delete(b.id);
   }
 
   // Escrituras del propio motor: no cuentan como cambios del usuario
@@ -502,6 +506,7 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
     onProgreso('Guardando cambios locales…');
     for (const o of obrasM.values()) await db.put('obras', o);
     for (const e of entriesM.values()) await db.put('entries', e);
+    for (const it of inboxM.values()) await db.put('inbox', it);
     for (const b of borradosM) {
       if (b.tipo === 'obra' && !obrasM.has(b.id)) await db.del('obras', b.id);
     if (b.tipo === 'entry' && !entriesM.has(b.id)) {
@@ -510,6 +515,11 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
       await db.del('entries', b.id);
     }
     if (b.tipo === 'blob') await db.del('blobs', b.id);
+      if (b.tipo === 'inbox' && !inboxM.has(b.id)) {
+        const local = await db.get('inbox', b.id);
+        if (local && local.blobId) await db.del('blobs', local.blobId);
+        await db.del('inbox', b.id);
+      }
     }
   } finally {
     db.pausarAvisos(false);
@@ -517,7 +527,10 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
 
   // --- 1) EL ÍNDICE PRIMERO: los cambios llegan a Drive en segundos, ---------
   //        pase lo que pase después con los archivos.
-  const blobsEnUso = new Set([...entriesM.values()].filter((e) => e.blobId).map((e) => e.blobId));
+  const blobsEnUso = new Set([
+    ...[...entriesM.values()].filter((e) => e.blobId).map((e) => e.blobId),
+    ...[...inboxM.values()].filter((e) => e.blobId).map((e) => e.blobId),
+  ]);
   let metaSalida = new Map(
     (((remoto && remoto.blobs) || []))
       .filter((b) => blobsEnUso.has(b.id))
@@ -531,6 +544,7 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
     obras: [...obrasM.values()],
     entries: [...entriesM.values()],
     blobs: [...metaSalida.values()],
+    inbox: [...inboxM.values()],
     borrados: borradosM,
     carpetas: [...carpetasIndice.values()],
   });
@@ -599,6 +613,9 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
   for (const e of entriesM.values()) {
     if (e.blobId && !porBlob.has(e.blobId)) porBlob.set(e.blobId, e);
   }
+  for (const it of inboxM.values()) {
+    if (it.blobId && !porBlob.has(it.blobId)) porBlob.set(it.blobId, it);
+  }
 
   // obras archivadas: sus archivos no se suben ni se bajan (se guardan fuera de Drive)
   const archivadas = new Set([...obrasM.values()].filter((o) => o.archivada).map((o) => o.id));
@@ -621,10 +638,15 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
       continue;
     }
 
-    const obra = obrasM.get(entry.obraId);
-    // las fotos van a una subcarpeta "Fotos"; el resto (PDF, etc.) a la raíz de la obra
-    const sub = entry.tipo === 'foto' ? 'Fotos' : null;
-    const carpetaDestino = await carpetaDeObra((obra && obra.nombre) || 'Sin obra', sub, entry.obraId);
+    const esInbox = !entry.obraId;
+    const obra = esInbox ? null : obrasM.get(entry.obraId);
+    // las fotos van a una subcarpeta "Fotos"; el resto (PDF, etc.) a la raíz
+    const sub = (entry.tipo === 'foto' || entry.tipo === 'image') ? 'Fotos' : null;
+    const carpetaDestino = await carpetaDeObra(
+      esInbox ? 'Entrada' : ((obra && obra.nombre) || 'Sin obra'),
+      sub,
+      esInbox ? '__entrada__' : entry.obraId
+    );
     if (!ocupados.has(carpetaDestino)) ocupados.set(carpetaDestino, new Set());
     const nombresCarpeta = ocupados.get(carpetaDestino);
 
@@ -734,6 +756,7 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
   const remotoEntries = new Map(((remoto && remoto.entries) || []).map((e) => [e.id, e]));
   const remotoObras = new Map(((remoto && remoto.obras) || []).map((o) => [o.id, o]));
   const remotoBlobsMeta = new Map(((remoto && remoto.blobs) || []).map((b) => [b.id, b]));
+  const remotoInbox = new Map(((remoto && remoto.inbox) || []).map((e) => [e.id, e]));
 
   const pendientes = [];
   for (const b of borradosM) {
@@ -742,6 +765,10 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
     if (b.tipo === 'blob') {
       // versión antigua de un archivo reemplazado: su copia de Drive va a la papelera
       const m = remotoBlobsMeta.get(b.id);
+      if (m && m.file) ids.push(m.file);
+    } else if (b.tipo === 'inbox') {
+      const it = remotoInbox.get(b.id);
+      const m = it && it.blobId ? remotoBlobsMeta.get(it.blobId) : null;
       if (m && m.file) ids.push(m.file);
     } else if (b.tipo === 'entry') {
       const e = remotoEntries.get(b.id);

@@ -761,6 +761,7 @@ async function asignarInboxA(obraId) {
       recordatorio: null, notificado: false, completado: false,
     });
     await db.del('inbox', it.id);
+    await marcarBorrado(it.id, 'inbox');
     n++;
   }
   seleccionInbox.clear();
@@ -895,6 +896,7 @@ async function renderInbox() {
       if (!it) continue;
       if (it.blobId) await db.del('blobs', it.blobId);
       await db.del('inbox', it.id);
+      await marcarBorrado(it.id, 'inbox');
     }
     seleccionInbox.clear();
     await reload();
@@ -1806,7 +1808,7 @@ view.addEventListener('click', async (ev) => {
   }
   if (act === 'del-inbox') {
     const it = inbox.find((x) => x.id === id);
-    if (it) { if (it.blobId) await db.del('blobs', it.blobId); await db.del('inbox', it.id); await reload(); route(); }
+    if (it) { if (it.blobId) await db.del('blobs', it.blobId); await db.del('inbox', it.id); await marcarBorrado(it.id, 'inbox'); await reload(); route(); }
     return;
   }
 });
