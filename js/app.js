@@ -779,8 +779,49 @@ function barraInbox() {
   if (todo) todo.textContent = (seleccionInbox.size === inbox.length && inbox.length) ? 'Quitar selección' : 'Seleccionar todo';
 }
 
+// Capturar directamente en la bandeja de entrada
+async function addAlInbox(files) {
+  for (const f0 of files) {
+    const f = await prepararFoto(f0);
+    const blobId = uid();
+    await db.put('blobs', { id: blobId, blob: f, nombre: f.name || 'foto.jpg', tipo: f.type });
+    await db.put('inbox', {
+      id: uid(), tipo: 'image', blobId,
+      nombre: f.name || 'foto.jpg', texto: '', url: '',
+      creado: new Date().toISOString(),
+    });
+  }
+  await reload();
+  route();
+}
+
+function notaInboxDialog() {
+  openModal(`
+    <h2>Nueva nota</h2>
+    <p class="hint">Se queda en la entrada hasta que la asignes a una obra.</p>
+    <label>Nota
+      <textarea id="nt_txt" placeholder="Apunta una tarea, un aviso o algo pendiente…"></textarea>
+    </label>
+    <div class="modalactions">
+      <button class="btn" id="nt_cancel">Cancelar</button>
+      <button class="btn primary" id="nt_save">Guardar</button>
+    </div>`, (m) => {
+    const area = m.querySelector('#nt_txt');
+    m.querySelector('#nt_cancel').onclick = closeModal;
+    m.querySelector('#nt_save').onclick = async () => {
+      const texto = area.value.trim();
+      if (!texto) { alert('Escribe algo.'); return; }
+      await db.put('inbox', { id: uid(), tipo: 'texto', texto, url: '', creado: new Date().toISOString() });
+      await reload();
+      closeModal();
+      route();
+    };
+    setTimeout(() => area.focus(), 60);
+  });
+}
+
 async function renderInbox() {
-  pageTitle.textContent = 'Recibidos';
+  pageTitle.textContent = 'Entrada';
   backBtn.hidden = true;
   fab.hidden = true;
   setActiveTab('#/inbox');
@@ -789,7 +830,18 @@ async function renderInbox() {
   seleccionInbox = new Set([...seleccionInbox].filter((id) => inbox.some((x) => x.id === id)));
 
   if (!inbox.length) {
-    view.innerHTML = `<div class="empty"><h2>Nada recibido</h2><p>Cuando compartas una foto o un enlace desde WhatsApp u otra app, llegará aquí para asignarlo a una obra.</p><p class="hint">En Android, instala la app y usa “Compartir → Chronos”.</p></div>`;
+    view.innerHTML = `
+      <div class="inboxhead">
+        <button class="btn primary" id="ib_foto">📷 Foto</button>
+        <button class="btn" id="ib_nota">💬 Nota</button>
+      </div>
+      <div class="empty">
+        <h2>La entrada está vacía</h2>
+        <p>Guarda aquí fotos y notas sin decidir todavía la obra, y asígnalas cuando quieras.</p>
+        <p class="hint">También llegan aquí las cosas que compartas desde WhatsApp → <b>Compartir → Chronos</b>.</p>
+      </div>`;
+    view.querySelector('#ib_foto').onclick = () => pickFiles('image/*', 'environment', (fs) => addAlInbox(fs));
+    view.querySelector('#ib_nota').onclick = notaInboxDialog;
     return;
   }
 
@@ -814,7 +866,12 @@ async function renderInbox() {
   }))).join('');
 
   view.innerHTML = `
-    <div class="inboxhead"><button class="btn" id="ib_todo">Seleccionar todo</button></div>
+    <div class="inboxhead">
+      <button class="btn primary" id="ib_foto">📷 Foto</button>
+      <button class="btn" id="ib_nota">💬 Nota</button>
+      <div class="spacer"></div>
+      <button class="btn" id="ib_todo">Seleccionar todo</button>
+    </div>
     <div class="entries">${rows}</div>
     <div class="inboxbar" id="ib_bar" hidden>
       <span><b id="ib_count">0</b> seleccionada(s)</span>
@@ -823,6 +880,8 @@ async function renderInbox() {
       <button class="btn danger" id="ib_descartar">Descartar</button>
     </div>`;
 
+  document.getElementById('ib_foto').onclick = () => pickFiles('image/*', 'environment', (fs) => addAlInbox(fs));
+  document.getElementById('ib_nota').onclick = notaInboxDialog;
   document.getElementById('ib_todo').onclick = () => {
     if (seleccionInbox.size === inbox.length) seleccionInbox.clear();
     else seleccionInbox = new Set(inbox.map((x) => x.id));
