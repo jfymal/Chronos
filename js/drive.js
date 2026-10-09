@@ -52,6 +52,39 @@ async function renombrarSolo(fileId, nombre) {
 
 export const configurado = () => !!CLIENT_ID;
 
+/* ------------------------- plataforma nativa (APK) ------------------------- */
+function cap() {
+  return (typeof window !== 'undefined' && window.capacitorExports) ? window.capacitorExports : null;
+}
+export function esNativo() {
+  const C = cap();
+  try { return !!(C && C.Capacitor && C.Capacitor.isNativePlatform && C.Capacitor.isNativePlatform()); }
+  catch (_) { return false; }
+}
+function pluginNativo(nombre) {
+  const C = cap();
+  if (!C || !C.registerPlugin) return null;
+  try { return C.registerPlugin(nombre); } catch (_) { return null; }
+}
+
+// En el APK el login lo hace la cuenta de Google del propio móvil:
+// no hay ventana emergente ni caducidad cada hora.
+let gsi = null;
+async function tokenNativo() {
+  const G = pluginNativo('GoogleSignIn');
+  if (!G) throw new Error('El plugin de Google no está disponible en esta app.');
+  if (!gsi) {
+    await G.initialize({ clientId: CLIENT_ID, scopes: [SCOPE] });
+    gsi = true;
+  }
+  const r = await G.signIn();
+  if (!r || !r.accessToken) throw new Error('Google no devolvió un token de acceso.');
+  token = r.accessToken;
+  expira = Date.now() + 55 * 60 * 1000;
+  guardarToken();
+  return token;
+}
+
 /* ------------------------------- nombres ------------------------------- */
 const SIN_VALIDOS = /[\\/:*?"<>|]/g;
 
@@ -140,8 +173,12 @@ function leerTokenGuardado() {
 async function pedirToken(interactivo) {
   if (!CLIENT_ID) throw new Error('Falta el Client ID en js/config.js');
   if (token && Date.now() < expira - 60000) return token;
-  if (leerTokenGuardado()) return token;         // reutiliza el de esta sesión de navegador
+  if (leerTokenGuardado()) return token;
+  if (esNativo()) return tokenNativo();     // en el APK: cuenta del sistema, sin ventanas
+  return tokenWeb(interactivo);
+}
 
+async function tokenWeb(interactivo) {
   await cargarGIS();
   if (!cliente) {
     cliente = window.google.accounts.oauth2.initTokenClient({
@@ -185,10 +222,15 @@ export async function conectar() {
   return true;
 }
 
-export function desconectar() {
+export async function desconectar() {
   olvidarToken();
   carpetaId = null;
   carpetasObra.clear();
+  if (esNativo()) {
+    const G = pluginNativo('GoogleSignIn');
+    if (G) { try { await G.signOut(); } catch (_) { /* nada */ } }
+    gsi = null;
+  }
 }
 
 /* ------------------------------- API ------------------------------- */

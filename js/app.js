@@ -426,7 +426,7 @@ function reminderDialog(id) {
     m.querySelector('#r_cancel').onclick = closeModal;
     m.querySelector('#r_clear').onclick = async () => {
       e.recordatorio = null; e.notificado = false; e.actualizado = new Date().toISOString();
-      await db.put('entries', e); await reload(); closeModal(); route();
+      await db.put('entries', e); await reload(); await programarRecordatorios(); closeModal(); route();
     };
     m.querySelector('#r_save').onclick = async () => {
       if (!sel) { alert('Elige un día en el calendario.'); return; }
@@ -437,7 +437,7 @@ function reminderDialog(id) {
       e.notificado = false;
       e.actualizado = new Date().toISOString();
       await guardarAjustes({ horaRecordatorio: horaInp.value || HORA_DEFECTO });
-      await db.put('entries', e); await reload(); closeModal(); route();
+      await db.put('entries', e); await reload(); await programarRecordatorios(); closeModal(); route();
     };
   });
 }
@@ -1255,6 +1255,67 @@ async function checkReminders() {
   if (due.length) await reload();
 }
 
+/* ============================ recordatorios nativos (APK) ============================ */
+function capPlugin(nombre) {
+  const C = window.capacitorExports;
+  if (!C || !C.registerPlugin) return null;
+  try { return C.registerPlugin(nombre); } catch (_) { return null; }
+}
+
+// id numérico estable a partir del id de la entrada (el plugin exige números)
+function idNotif(entryId) {
+  let h = 0;
+  for (let i = 0; i < entryId.length; i++) h = (h * 31 + entryId.charCodeAt(i)) | 0;
+  return Math.abs(h) % 2000000000 + 1;
+}
+
+async function programarRecordatorios() {
+  if (!drive.esNativo()) return { nativo: false };
+  const LN = capPlugin('LocalNotifications');
+  if (!LN) return { nativo: false };
+
+  try { await LN.requestPermissions(); } catch (_) { /* el usuario decide */ }
+
+  // cancelar los programados antes
+  const previos = await db.get('meta', 'notif_pendientes');
+  const listaPrevia = (previos && previos.valor) || [];
+  if (listaPrevia.length) {
+    try { await LN.cancel({ notifications: listaPrevia.map((id) => ({ id })) }); } catch (_) { /* nada */ }
+  }
+
+  const nuevas = [];
+  const ahora = Date.now();
+  for (const e of entries) {
+    if (!e.recordatorio || e.completado) continue;
+    const t = new Date(e.recordatorio).getTime();
+    if (!t || t < ahora - 60000) continue;          // ya pasados: no se programan
+    const o = obras.find((x) => x.id === e.obraId);
+    nuevas.push({
+      id: idNotif(e.id),
+      title: 'Chronos · ' + (o ? o.nombre : 'Obra'),
+      body: String(entryLabel(e)).slice(0, 140),
+      schedule: { at: new Date(t), allowWhileIdle: true },
+    });
+  }
+
+  let programadas = 0;
+  if (nuevas.length) {
+    try {
+      await LN.schedule({ notifications: nuevas });
+      programadas = nuevas.length;
+    } catch (err) {
+      // si fallan las alarmas exactas, se reintenta sin exigirlas
+      try {
+        const sencillas = nuevas.map((n) => ({ ...n, schedule: { at: n.schedule.at, allowWhileIdle: false } }));
+        await LN.schedule({ notifications: sencillas });
+        programadas = sencillas.length;
+      } catch (_) { /* no se pudieron programar */ }
+    }
+  }
+  await db.put('meta', { k: 'notif_pendientes', valor: nuevas.map((n) => n.id) });
+  return { nativo: true, programadas };
+}
+
 /* ============================ sincronización con Drive ============================ */
 let sincronizando = false;
 let syncPendiente = false;
@@ -1363,6 +1424,7 @@ async function sincronizarDrive(opts = {}) {
     await reload();
     route();
     progresoActual = '';
+    programarRecordatorios();
     anota(r.sinCambios
       ? 'OK · sin cambios en Drive'
       : `OK · obras ${r.obras} · entradas ${r.entries} · subidos ${r.subidos} · bajados ${r.bajados}${r.papelera ? ' · papelera ' + r.papelera : ''}`);
@@ -1560,6 +1622,13 @@ async function settingsDialog() {
     <p class="hint" style="margin-top:14px">Los datos se guardan solo en este dispositivo hasta que actives la sincronización.</p>`, (m) => {
     m.querySelector('#s_close').onclick = closeModal;
     m.querySelector('#s_notif').onclick = async () => {
+      if (drive.esNativo()) {
+        const r = await programarRecordatorios();
+        alert(r.nativo
+          ? `Listo. Recordatorios programados como alarmas del sistema: ${r.programadas}.\n\nSonarán aunque la app esté cerrada.`
+          : 'Este dispositivo no tiene las notificaciones nativas.');
+        return;
+      }
       if (!('Notification' in window)) { alert('Este navegador no soporta notificaciones.'); return; }
       const p = await Notification.requestPermission();
       alert(p === 'granted' ? 'Notificaciones activadas.' : 'No se concedieron permisos.');
@@ -1844,7 +1913,8 @@ window.addEventListener('beforeunload', (e) => {
 
 /* ============================ arranque ============================ */
 async function init() {
-  if ('serviceWorker' in navigator) {
+  // En el APK no hace falta service worker: los ficheros ya son locales
+  if ('serviceWorker' in navigator && !drive.esNativo()) {
     try { await navigator.serviceWorker.register('sw.js'); } catch (_) { /* sin SW */ }
   }
   anota('Chronos ' + VERSION + ' — inicio');
@@ -1858,6 +1928,7 @@ async function init() {
   }
   checkReminders();
   setInterval(checkReminders, 60000);
+  programarRecordatorios();
   // Cada 5 minutos, si hay algo pendiente y las condiciones lo permiten.
   setInterval(async () => {
     // Vigilante: si una sincronización lleva colgada demasiado, se libera.
