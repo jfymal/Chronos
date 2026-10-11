@@ -42,6 +42,26 @@ export async function getAll(store) {
   const d = await openDB();
   return reqP(d.transaction(store, 'readonly').objectStore(store).getAll());
 }
+// Metadatos de los blobs SIN traer su contenido a memoria: con ~1.700 fotos,
+// un getAll('blobs') cargaba cientos de MB y bloqueaba la sincronización en el
+// móvil. Aquí solo se leen los campos ligeros, uno a uno, y se anota si el
+// blob tiene contenido (tieneDatos) para saber si hay que subirlo.
+export async function blobsLigeros() {
+  const d = await openDB();
+  const out = [];
+  await new Promise((res, rej) => {
+    const req = d.transaction('blobs', 'readonly').objectStore('blobs').openCursor();
+    req.onsuccess = () => {
+      const c = req.result;
+      if (!c) { res(); return; }
+      const v = c.value;
+      out.push({ id: v.id, nombre: v.nombre || '', tipo: v.tipo || '', tieneDatos: !!(v.blob && v.blob.size > 0) });
+      c.continue();
+    };
+    req.onerror = () => rej(req.error);
+  });
+  return out;
+}
 export async function get(store, key) {
   const d = await openDB();
   return reqP(d.transaction(store, 'readonly').objectStore(store).get(key));

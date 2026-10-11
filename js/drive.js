@@ -504,11 +504,11 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
   onProgreso('Leyendo estado remoto…');
   // Si NO hay cambios locales, basta con preguntar la fecha del índice (mucho más barato).
   // Por defecto se asume que SÍ puede haber cambios: nunca saltarse trabajo por error.
-  // Excepción: si toca comprobar que los archivos sigan en Drive hay que hacer el
-  // camino completo, porque el barato no lee el índice y no podría detectarlo.
-  const marcaVerif = await db.get('meta', 'verif_refs');
-  const verifVencida = Date.now() - Number((marcaVerif && marcaVerif.valor) || 0) > 7 * 24 * 60 * 60 * 1000;
-  const hayCambiosLocales = verifVencida || opts.hayCambiosLocales !== false;
+  // Excepción: una vez al día se hace el camino completo para comprobar un lote
+  // de archivos (el camino barato no lee el índice y no podría detectarlo).
+  const marcaLote = await db.get('meta', 'verif_lote');
+  const loteVencido = Date.now() - Number((marcaLote && marcaLote.valor) || 0) > 24 * 60 * 60 * 1000;
+  const hayCambiosLocales = loteVencido || opts.hayCambiosLocales !== false;
   const remoto = await leerDatos(hayCambiosLocales);
   if (remoto && remoto.__sinCambios) {
     const sello = new Date().toISOString();
@@ -519,7 +519,7 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
   const [obrasL, entriesL, blobsL, inboxL, metaBorrados] = await Promise.all([
     db.getAll('obras'),
     db.getAll('entries'),
-    db.getAll('blobs'),
+    db.blobsLigeros(),
     db.getAll('inbox'),
     db.get('meta', 'borrados'),
   ]);
@@ -585,15 +585,18 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
   );
   carpetasIndice = new Map((((remoto && remoto.carpetas) || [])).map((c) => [c.obraId, c]));
 
+  // Orden fijo por id: así el índice sale idéntico en todos los dispositivos y no
+  // se reescribe (ni se pisan unos a otros) solo por diferencias de orden.
+  const ordenado = (arr) => [...arr].sort((x, y) => String(x.id).localeCompare(String(y.id)));
   const cuerpoIndice = () => JSON.stringify({
     app: 'obras',
     version: 3,
-    obras: [...obrasM.values()],
-    entries: [...entriesM.values()],
-    blobs: [...metaSalida.values()],
-    inbox: [...inboxM.values()],
-    borrados: borradosM,
-    carpetas: [...carpetasIndice.values()],
+    obras: ordenado(obrasM.values()),
+    entries: ordenado(entriesM.values()),
+    blobs: ordenado(metaSalida.values()),
+    inbox: ordenado(inboxM.values()),
+    borrados: ordenado(borradosM),
+    carpetas: [...carpetasIndice.values()].sort((x, y) => String(x.obraId).localeCompare(String(y.obraId))),
   });
 
   // Escribe el índice solo si ha cambiado de verdad (evita ~1 MB por sincronización)
@@ -634,7 +637,6 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
   async function trabajarArchivos() {
   onProgreso('Revisando archivos…');
   const metaRemota = new Map((((remoto && remoto.blobs) || [])).map((b) => [b.id, b]));
-  const idsLocales = new Set(blobsL.map((b) => b.id));
 
   // El índice ya sabe dónde está cada archivo (fileId y carpeta). Solo se escanea
   // Drive entero si hay algo que descargar de lo que no tenemos referencia,
@@ -648,27 +650,39 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
     for (const f of arbol) if (f.carpeta) carpetasObra.set('n:' + f.carpeta, f.carpetaId);
     await metaDel('forzar_escaneo');
   }
-  // --- AUTORREPARACIÓN: el índice puede apuntar a archivos que ya no existen ---
-  // Antes se daba por bueno cualquier fileId del índice. Si el archivo se perdió
-  // en Drive (papelera, borrado por error…), la app creía que ya estaba subido y
-  // NUNCA lo volvía a subir: la foto desaparecía sin remedio.
-  // Se contrasta el índice con el árbol real y se limpian las referencias muertas,
-  // para que el dispositivo que aún tenga el archivo lo vuelva a subir.
+  // --- AUTORREPARACIÓN (por lotes) -------------------------------------------
+  // El índice puede apuntar a archivos que ya no existen en Drive. Antes se daba
+  // por bueno cualquier fileId: si la foto se perdía, la app creía que ya estaba
+  // subida y NUNCA la volvía a subir.
+  // Ahora se comprueban unas pocas referencias cada vez (las verificadas hace más
+  // tiempo) en lugar de recorrer Drive entero: con tres dispositivos, el recorrido
+  // completo agotaba el límite de peticiones de Google y dejaba la sincronización
+  // colgada a medias.
   let reparados = 0;
-  if (verifVencida) {
+  if (loteVencido) {
     const refs = [...metaRemota.values()].filter((b) => b.file);
     if (refs.length) {
-      onProgreso('Comprobando que los archivos sigan en Drive…');
-      const t = arbol.length ? arbol : await listarArbol();
-      const vivos = new Set(t.map((f) => f.id));
-      for (const b of refs) {
-        if (vivos.has(b.file)) continue;
-        // misma referencia que hay en metaSalida: al limpiarla se re-subirá
-        b.file = null; b.carpeta = null; reparados++;
-      }
+      onProgreso('Comprobando archivos en Drive…');
+      refs.sort((a, b) => Number(a.verificado || 0) - Number(b.verificado || 0));
+      const lote = refs.slice(0, 40);
+      await enParalelo(lote, 4, async (b) => {
+        let perdido = false;
+        try {
+          const j = await (await api(`${API}/files/${b.file}?fields=id,trashed`)).json();
+          if (j.trashed) perdido = true;
+        } catch (err) {
+          // Solo se da por perdido si Drive dice que no está. Un fallo de red,
+          // un 429 o un timeout NO deben provocar una subida duplicada.
+          if (/\b404\b/.test(String((err && err.message) || ''))) perdido = true;
+          else return;                     // sin verificar: se reintentará otro día
+        }
+        b.verificado = Date.now();
+        // misma referencia que hay en metaSalida: al quitarla se volverá a subir
+        if (perdido) { b.file = null; b.carpeta = null; reparados++; }
+      });
       if (reparados) onProgreso(`Archivos perdidos: ${reparados} (se volverán a subir)`);
     }
-    await metaPut({ k: 'verif_refs', valor: Date.now() });
+    await metaPut({ k: 'verif_lote', valor: Date.now() });
   }
 
   const porNombre = new Map(arbol.map((f) => [f.name, f]));           // esquema antiguo: nombre == blobId
@@ -746,7 +760,7 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
     }
     // Último recurso barato: buscar ese archivo por su nombre en su carpeta
     // (1 petición) en lugar de recorrer todo Drive (2N+1).
-    if (!ficha && !(blob && blob.blob) && busquedas < 60) {
+    if (!ficha && !(blob && blob.tieneDatos) && busquedas < 60) {
       busquedas++;
       try {
         const q = `name='${nombre.replace(/'/g, "\\'")}' and mimeType!='${MIME_CARPETA}' and trashed=false and '${carpetaDestino}' in parents`;
@@ -755,7 +769,7 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
       } catch (_) { /* se deja sin ficha */ }
     }
 
-    if (blob && blob.blob) {
+    if (blob && blob.tieneDatos) {
       if (ficha) {
         // Solo se mueve si sabemos de verdad dónde está (si no, se deja como está)
         if (ficha.carpetaId && (ficha.name !== nombre || ficha.carpetaId !== carpetaDestino)) {
@@ -763,7 +777,7 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
         }
         metaSalida.set(blobId, { id: blobId, nombre, tipo: blob.tipo || '', file: ficha.id, carpeta: carpetaDestino });
       } else {
-        subir.push({ blobId, nombre, carpetaId: carpetaDestino, blob: blob.blob, tipo: blob.tipo || '' });
+        subir.push({ blobId, nombre, carpetaId: carpetaDestino, tipo: blob.tipo || '' });
         // se anota ya, para que la subida rellene el fileId y no se repita
         metaSalida.set(blobId, { id: blobId, nombre, tipo: blob.tipo || '', file: null, carpeta: carpetaDestino });
       }
@@ -789,7 +803,9 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
   if (subir.length) {
     await enParalelo(subir, SUBIDA_PARALELA, async (s) => {
       try {
-        const id = await subirNuevo(s.nombre, s.blob, s.carpetaId);
+        const real = await db.get('blobs', s.blobId);   // el binario, solo ahora
+        if (!real || !real.blob) throw new Error('el archivo ya no está en el dispositivo');
+        const id = await subirNuevo(s.nombre, real.blob, s.carpetaId);
         const m = metaSalida.get(s.blobId);
         if (m) { m.file = id; m.tipo = s.tipo; m.nombre = s.nombre; }
       } catch (_) { fallosArchivos++; }
