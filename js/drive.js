@@ -926,6 +926,7 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
     bajados: res.bajados,
     movidos: res.movidos,
     papelera: res.papelera,
+    reparados: res.reparados || 0,
   };
 }
 

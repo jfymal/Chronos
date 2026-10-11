@@ -1312,7 +1312,15 @@ async function programarRecordatorios() {
       } catch (_) { /* no se pudieron programar */ }
     }
   }
-  await db.put('meta', { k: 'notif_pendientes', valor: nuevas.map((n) => n.id) });
+  // Escritura del motor, no del usuario: si contara como cambio, la app se
+  // quedaría para siempre en "hay cambios pendientes de subir" (se llama al
+  // final de cada sincronización) y sincronizaría siempre por el camino caro.
+  db.pausarAvisos(true);
+  try {
+    await db.put('meta', { k: 'notif_pendientes', valor: nuevas.map((n) => n.id) });
+  } finally {
+    db.pausarAvisos(false);
+  }
   return { nativo: true, programadas };
 }
 
@@ -1434,7 +1442,8 @@ async function sincronizarDrive(opts = {}) {
     } else if (!silencioso) {
       const extra = r.movidos ? `\nArchivos reorganizados: ${r.movidos}` : '';
       const pap = r.papelera ? `\nEnviados a la papelera de Drive: ${r.papelera}` : '';
-      alert(`Sincronizado con Drive.\n\nObras: ${r.obras}\nEntradas: ${r.entries}\nArchivos subidos: ${r.subidos}\nArchivos bajados: ${r.bajados}${extra}${pap}`);
+      const rep = r.reparados ? `\nRecuperados (se habían perdido en Drive): ${r.reparados}` : '';
+      alert(`Sincronizado con Drive.\n\nObras: ${r.obras}\nEntradas: ${r.entries}\nArchivos subidos: ${r.subidos}\nArchivos bajados: ${r.bajados}${extra}${pap}${rep}`);
     }
   } catch (err) {
     console.error('Chronos: error de sincronización', err);
