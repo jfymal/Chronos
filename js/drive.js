@@ -504,7 +504,11 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
   onProgreso('Leyendo estado remoto…');
   // Si NO hay cambios locales, basta con preguntar la fecha del índice (mucho más barato).
   // Por defecto se asume que SÍ puede haber cambios: nunca saltarse trabajo por error.
-  const hayCambiosLocales = opts.hayCambiosLocales !== false;
+  // Excepción: si toca comprobar que los archivos sigan en Drive hay que hacer el
+  // camino completo, porque el barato no lee el índice y no podría detectarlo.
+  const marcaVerif = await db.get('meta', 'verif_refs');
+  const verifVencida = Date.now() - Number((marcaVerif && marcaVerif.valor) || 0) > 7 * 24 * 60 * 60 * 1000;
+  const hayCambiosLocales = verifVencida || opts.hayCambiosLocales !== false;
   const remoto = await leerDatos(hayCambiosLocales);
   if (remoto && remoto.__sinCambios) {
     const sello = new Date().toISOString();
@@ -644,6 +648,29 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
     for (const f of arbol) if (f.carpeta) carpetasObra.set('n:' + f.carpeta, f.carpetaId);
     await metaDel('forzar_escaneo');
   }
+  // --- AUTORREPARACIÓN: el índice puede apuntar a archivos que ya no existen ---
+  // Antes se daba por bueno cualquier fileId del índice. Si el archivo se perdió
+  // en Drive (papelera, borrado por error…), la app creía que ya estaba subido y
+  // NUNCA lo volvía a subir: la foto desaparecía sin remedio.
+  // Se contrasta el índice con el árbol real y se limpian las referencias muertas,
+  // para que el dispositivo que aún tenga el archivo lo vuelva a subir.
+  let reparados = 0;
+  if (verifVencida) {
+    const refs = [...metaRemota.values()].filter((b) => b.file);
+    if (refs.length) {
+      onProgreso('Comprobando que los archivos sigan en Drive…');
+      const t = arbol.length ? arbol : await listarArbol();
+      const vivos = new Set(t.map((f) => f.id));
+      for (const b of refs) {
+        if (vivos.has(b.file)) continue;
+        // misma referencia que hay en metaSalida: al limpiarla se re-subirá
+        b.file = null; b.carpeta = null; reparados++;
+      }
+      if (reparados) onProgreso(`Archivos perdidos: ${reparados} (se volverán a subir)`);
+    }
+    await metaPut({ k: 'verif_refs', valor: Date.now() });
+  }
+
   const porNombre = new Map(arbol.map((f) => [f.name, f]));           // esquema antiguo: nombre == blobId
   const porId = new Map(arbol.map((f) => [f.id, f]));
   const porCarpetaYNombre = new Map(arbol.map((f) => [f.carpetaId + '|' + f.name, f]));
@@ -857,6 +884,7 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
     bajados: bajar.length,
     movidos: mover.length,
     papelera: aPapeleraN,
+    reparados,
   };
   }  // fin de trabajarArchivos()
 
