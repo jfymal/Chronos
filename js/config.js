@@ -3,6 +3,6 @@
 // Origen autorizado de JavaScript: la URL donde publiques la app
 // (ej. https://tuusuario.github.io).
 export const CLIENT_ID = '113599620830-lp43kiept1rg1fc7g3i307uh2r4icedq.apps.googleusercontent.com';
-export const VERSION = 'v20 · 2026-10-09';  // APK con recordatorios nativos
+export const VERSION = 'v21 · 2026-10-11';  // arregla la subida bloqueada
 export const CARPETA_DRIVE = 'ObrasApp';
 export const SUBIDA_PARALELA = 4;       // archivos simultáneos al subir/bajar

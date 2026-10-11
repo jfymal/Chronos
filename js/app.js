@@ -1416,7 +1416,8 @@ async function sincronizarDrive(opts = {}) {
     }, {
       bajoDemanda: ajustes.bajoDemanda,
       interactivo: !silencioso,
-      sinCambiosLocales: versionLocal <= versionSincronizada,
+      // true = SÍ hay cambios locales que subir (nombre claro, sin dobles negaciones)
+      hayCambiosLocales: versionLocal > versionSincronizada,
       // El índice ya está a salvo: refrescamos la pantalla para que se vea al instante
       onIndice: async () => { await reload(); route(); },
     });

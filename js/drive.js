@@ -502,8 +502,9 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
   await asegurarCarpeta();
 
   onProgreso('Leyendo estado remoto…');
-  // Si sabemos que no hay cambios locales, basta con preguntar la fecha del índice.
-  const hayCambiosLocales = opts.sinCambiosLocales !== false;
+  // Si NO hay cambios locales, basta con preguntar la fecha del índice (mucho más barato).
+  // Por defecto se asume que SÍ puede haber cambios: nunca saltarse trabajo por error.
+  const hayCambiosLocales = opts.hayCambiosLocales !== false;
   const remoto = await leerDatos(hayCambiosLocales);
   if (remoto && remoto.__sinCambios) {
     const sello = new Date().toISOString();
@@ -772,7 +773,10 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
     await enParalelo(bajar, SUBIDA_PARALELA, async (b) => {
       try {
         const blob = await descargar(b.fileId);
-        await db.put('blobs', { id: b.blobId, blob, nombre: b.nombre, tipo: blob.type || '' });
+        db.pausarAvisos(true);
+        try {
+          await db.put('blobs', { id: b.blobId, blob, nombre: b.nombre, tipo: blob.type || '' });
+        } finally { db.pausarAvisos(false); }
       } catch (_) { fallosArchivos++; }
       avanza('Bajando archivos…');
     });
@@ -904,7 +908,10 @@ export async function descargarBlob(blobId) {
   if (!ref || !ref.file) throw new Error('Ese archivo no está en Drive.');
   await pedirToken(false);
   const blob = await descargar(ref.file);
-  await db.put('blobs', { id: blobId, blob, nombre: ref.nombre || blobId, tipo: blob.type || ref.tipo || '' });
+  db.pausarAvisos(true);
+  try {
+    await db.put('blobs', { id: blobId, blob, nombre: ref.nombre || blobId, tipo: blob.type || ref.tipo || '' });
+  } finally { db.pausarAvisos(false); }
   return blob;
 }
 
