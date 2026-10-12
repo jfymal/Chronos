@@ -1505,8 +1505,13 @@ let syncTimer = null;
 
 function enWifi() {
   const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-  if (!c || !c.type) return true;               // no se puede saber: permitimos
-  return c.type === 'wifi' || c.type === 'ethernet';
+  // En el WebView de Android casi nunca se sabe el tipo de red: devuelve 'unknown'
+  // o nada. Cuando NO se puede saber hay que PERMITIR el paso de archivos: si no,
+  // las fotos se quedan sin subir para siempre (fue el fallo de la v25).
+  if (!c || !c.type) return true;                       // no hay información: permitimos
+  const t = String(c.type).toLowerCase();
+  if (t === 'unknown' || t === 'other' || t === 'none') return true;   // no concluyente
+  return t === 'wifi' || t === 'ethernet';
 }
 
 function minutosDesde(iso) {
