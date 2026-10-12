@@ -276,10 +276,16 @@ async function addFiles(obraId, files, tipo) {
     await db.put('entries', entrada);
     ultima = entrada;
   }
+  // Con UNA sola foto se abre primero la pantalla de foto + descripción (va en el
+  // momento) y la obra se refresca al cerrarla. Antes se repintaba la obra entera
+  // —con cientos de fotos— antes de abrir el diálogo, y esa era la tardanza.
+  if (tipo === 'foto' && files.length === 1 && ultima) {
+    if (!entries.some((x) => x.id === ultima.id)) entries.push(ultima);
+    await pieDialog(ultima.id);
+    return;
+  }
   await reload();
   route();
-  // si acabas de hacer UNA foto, ofrecer describirla enseguida
-  if (tipo === 'foto' && files.length === 1 && ultima) pieDialog(ultima.id);
 }
 
 function commentDialog(obraId) {
@@ -556,7 +562,7 @@ async function entryHtml(e, selMode) {
       ${caption}${body}${pie}
       <div class="entrymeta">
         <span>${iconFor(e.tipo)} ${fmt(e.creado)}</span>${chips}${remPill}
-        ${e.tipo === 'foto' ? `<button class="minibtn" data-act="pie" data-id="${e.id}">${e.texto ? 'editar descripción' : 'describir'}</button>` : ''}
+        ${e.tipo === 'foto' ? `<button class="minibtn" data-act="pie" data-id="${e.id}">${e.texto ? 'foto y descripción' : 'describir'}</button>` : ''}
         ${e.tipo === 'foto' ? `<button class="minibtn" data-act="anotar" data-id="${e.id}">anotar</button>` : ''}
         <button class="minibtn" data-act="mover" data-id="${e.id}">mover de obra</button>
         <button class="minibtn" data-act="fijar" data-id="${e.id}">${e.fijado ? '📌 quitar' : '📌 fijar'}</button>
@@ -1340,18 +1346,24 @@ function anota(msg) {
   if (registro.length > 400) registro.shift();
 }
 
-// Descripción al pie de una foto.
-function pieDialog(entryId) {
-  const e = entries.find((x) => x.id === entryId);
+// Foto y descripción en la MISMA pantalla: la foto ya está guardada al abrirse,
+// así que se puede guardar solo con la foto, solo con la descripción o con las dos.
+// Se abre al instante (sin esperar a refrescar la obra entera) y, si no hay foto,
+// se puede añadir una desde aquí mismo.
+async function pieDialog(entryId) {
+  const e = (entries.find((x) => x.id === entryId)) || (await db.get('entries', entryId));
   if (!e) return;
+  const url = e.blobId ? await blobUrl(e.blobId) : null;
   openModal(`
-    <h2>Descripción de la foto</h2>
-    <p class="hint">Aparecerá debajo de la foto, para ir anotando lo que necesites.</p>
-    <label>Descripción
-      <textarea id="pie_txt" placeholder="Describe lo que quieras recordar de esta foto…">${esc(e.texto || '')}</textarea>
+    <h2>Foto y descripción</h2>
+    ${url
+      ? `<img src="${url}" alt="" style="max-width:100%;max-height:44vh;border-radius:10px;margin:2px 0 10px">`
+      : `<button class="btn" id="pie_foto" style="margin:4px 0 10px">📷 Añadir una foto</button>`}
+    <label>Descripción (opcional)
+      <textarea id="pie_txt" placeholder="Describe lo que quieras recordar…">${esc(e.texto || '')}</textarea>
     </label>
     <div class="modalactions">
-      <button class="btn" id="pie_skip">Sin descripción</button>
+      <button class="btn" id="pie_skip">Guardar sin descripción</button>
       <button class="btn primary" id="pie_save">Guardar</button>
     </div>`, (m) => {
     const area = m.querySelector('#pie_txt');
@@ -1359,12 +1371,27 @@ function pieDialog(entryId) {
       e.texto = texto;
       e.actualizado = new Date().toISOString();
       await db.put('entries', e);
-      await reload();
       closeModal();
+      await reload();
       route();
     };
     m.querySelector('#pie_save').onclick = () => guardar(area.value.trim());
-    m.querySelector('#pie_skip').onclick = () => guardar('');
+    m.querySelector('#pie_skip').onclick = () => guardar(e.texto || '');
+    const bf = m.querySelector('#pie_foto');
+    if (bf) bf.onclick = () => pickFiles('image/*', 'environment', async (fs) => {
+      if (!fs || !fs.length) return;
+      const f = await prepararFoto(fs[0]);
+      const blobId = uid();
+      await db.put('blobs', { id: blobId, blob: f, nombre: f.name || 'foto.jpg', tipo: f.type });
+      e.blobId = blobId;
+      e.tipo = 'foto';
+      e.nombre = f.name || 'foto.jpg';
+      e.actualizado = new Date().toISOString();
+      await db.put('entries', e);
+      closeModal();
+      await reload();
+      route();
+    });
     setTimeout(() => area.focus(), 60);
   });
 }
