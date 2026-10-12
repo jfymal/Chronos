@@ -228,13 +228,24 @@ function obraDialog(existing) {
 function pickFiles(accept, capture, cb) {
   const inp = document.createElement('input');
   inp.type = 'file';
-  inp.accept = accept;
-  if (capture) inp.capture = capture;
-  // OJO: si se permite elegir varios archivos, Android IGNORA la cámara y abre
-  // la galería. Por eso "Hacer foto" abría la galería en algunos móviles.
-  inp.multiple = !capture && accept.startsWith('image');
-  inp.onchange = () => { const fs = [...inp.files]; if (fs.length) cb(fs); };
+  // Los atributos deben ir como atributos de verdad (setAttribute), no solo como
+  // propiedad, y el input tiene que estar EN EL DOM: si no, el WebView de Android
+  // ignora lo de "capture" y abre la galería en vez de la cámara.
+  inp.setAttribute('accept', accept);
+  if (capture) inp.setAttribute('capture', capture);
+  // Con varios archivos Android IGNORA la cámara: solo se permite en la galería.
+  if (!capture && accept.startsWith('image')) inp.setAttribute('multiple', '');
+  inp.style.position = 'fixed';
+  inp.style.left = '-9999px';
+  inp.style.opacity = '0';
+  document.body.appendChild(inp);
+  inp.onchange = () => {
+    const fs = [...inp.files];
+    inp.remove();
+    if (fs.length) cb(fs);
+  };
   inp.click();
+  setTimeout(() => { if (document.body.contains(inp) && !inp.files.length) inp.remove(); }, 120000);
 }
 
 function entryMenu(obraId) {
