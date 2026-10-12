@@ -225,6 +225,34 @@ function obraDialog(existing) {
 }
 
 /* ============================ añadir entradas ============================ */
+// Cámara. En el APK se usa la cámara NATIVA (plugin de Capacitor): el WebView de
+// Android no traduce bien "capture" en todos los móviles (en el Pixel abría la
+// galería). Si el plugin no está, se cae al selector normal.
+async function hacerFoto(obraId) {
+  const Cam = (typeof capPlugin === 'function') ? capPlugin('Camera') : null;
+  if (!Cam || !Cam.getPhoto) { pickFiles('image/*', 'environment', (fs) => addFiles(obraId, fs, 'foto')); return; }
+  let foto = null;
+  try {
+    foto = await Cam.getPhoto({
+      quality: 88, allowEditing: false, resultType: 'uri',
+      source: 'CAMERA', saveToGallery: false, width: 1920, correctOrientation: true,
+    });
+  } catch (err) {
+    const m = String((err && err.message) || err);
+    if (/cancel/i.test(m)) return;                 // el usuario cerró la cámara
+    alert('No se pudo abrir la cámara:\n\n' + m);
+    return;
+  }
+  if (!foto || !foto.webPath) { alert('La cámara no devolvió ninguna foto.'); return; }
+  try {
+    const blob = await (await fetch(foto.webPath)).blob();
+    const f = new File([blob], 'foto_' + Date.now() + '.jpg', { type: blob.type || 'image/jpeg' });
+    await addFiles(obraId, [f], 'foto');
+  } catch (err) {
+    alert('No se pudo guardar la foto:\n\n' + String((err && err.message) || err));
+  }
+}
+
 function pickFiles(accept, capture, cb) {
   const inp = document.createElement('input');
   inp.type = 'file';
@@ -263,7 +291,7 @@ function entryMenu(obraId) {
       b.onclick = () => {
         const k = b.dataset.k;
         closeModal();
-        if (k === 'camara') pickFiles('image/*', 'environment', (fs) => addFiles(obraId, fs, 'foto'));
+        if (k === 'camara') hacerFoto(obraId);
         if (k === 'galeria') pickFiles('image/*', null, (fs) => addFiles(obraId, fs, 'foto'));
         if (k === 'lienzo') openEditor(obraId, null);
         if (k === 'pdf') pickFiles('application/pdf', null, (fs) => addFiles(obraId, fs, 'pdf'));
