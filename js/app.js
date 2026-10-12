@@ -276,14 +276,8 @@ async function addFiles(obraId, files, tipo) {
     await db.put('entries', entrada);
     ultima = entrada;
   }
-  // Con UNA sola foto se abre primero la pantalla de foto + descripción (va en el
-  // momento) y la obra se refresca al cerrarla. Antes se repintaba la obra entera
-  // —con cientos de fotos— antes de abrir el diálogo, y esa era la tardanza.
-  if (tipo === 'foto' && files.length === 1 && ultima) {
-    if (!entries.some((x) => x.id === ultima.id)) entries.push(ultima);
-    await pieDialog(ultima.id);
-    return;
-  }
+  // La foto se guarda y se vuelve a la obra sin ninguna ventana ni confirmación.
+  // Para ponerle comentario, cada foto tiene su botón destacado en la propia lista.
   await reload();
   route();
 }
@@ -560,9 +554,9 @@ async function entryHtml(e, selMode) {
     ${casilla}
     <div class="entrybody">
       ${caption}${body}${pie}
+      ${e.tipo === 'foto' ? `<button class="btnpie${e.texto ? ' hecho' : ''}" data-act="pie" data-id="${e.id}">${e.texto ? '💬 Editar comentario' : '💬 Añadir comentario a esta foto'}</button>` : ''}
       <div class="entrymeta">
         <span>${iconFor(e.tipo)} ${fmt(e.creado)}</span>${chips}${remPill}
-        ${e.tipo === 'foto' ? `<button class="minibtn" data-act="pie" data-id="${e.id}">${e.texto ? 'foto y descripción' : 'describir'}</button>` : ''}
         ${e.tipo === 'foto' ? `<button class="minibtn" data-act="anotar" data-id="${e.id}">anotar</button>` : ''}
         <button class="minibtn" data-act="mover" data-id="${e.id}">mover de obra</button>
         <button class="minibtn" data-act="fijar" data-id="${e.id}">${e.fijado ? '📌 quitar' : '📌 fijar'}</button>
