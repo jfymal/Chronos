@@ -1426,10 +1426,19 @@ async function sincronizarDrive(opts = {}) {
       interactivo: !silencioso,
       // true = SÍ hay cambios locales que subir (nombre claro, sin dobles negaciones)
       hayCambiosLocales: versionLocal > versionSincronizada,
+      // Fotos y PDF solo se mueven con WiFi (si está activado); el resto de datos
+      // se sincroniza igual con datos móviles.
+      permitirArchivos: !ajustes.soloWifi || enWifi(),
       // El índice ya está a salvo: refrescamos la pantalla para que se vea al instante
       onIndice: async () => { await reload(); route(); },
     });
     versionSincronizada = vSnapshot;      // lo que ya está subido (lo posterior sigue pendiente)
+    ultimaResumen = {
+      cuando: new Date().toISOString(),
+      subidos: r.subidos || 0, bajados: r.bajados || 0,
+      papelera: r.papelera || 0, reparados: r.reparados || 0,
+      archivosAplazados: !!r.archivosAplazados,
+    };
     await reload();
     route();
     progresoActual = '';
@@ -1499,7 +1508,8 @@ async function sincronizarAuto() {
   if (!drive.configurado()) return;
   if (sincronizando) { syncPendiente = true; return; }   // no se descarta: se re-encola al terminar
   if (!navigator.onLine) { setMotivo('sin conexión'); return; }
-  if (ajustes.soloWifi && !enWifi()) { setMotivo('esperando WiFi (dato móvil)'); return; }
+  // Los datos (obras, entradas, estados…) se sincronizan con cualquier conexión.
+  // Solo las fotos y los PDF esperan a WiFi, y eso se decide más abajo.
   setMotivo('');
   await sincronizarDrive({ silencioso: true });
 }
@@ -1566,9 +1576,32 @@ function pintarEstadoSync() {
   }
   if (sucio) {
     if (syncBtn) { syncBtn.className = 'iconbtn pendiente'; syncBtn.title = 'Hay cambios sin subir'; syncBtn.innerHTML = '☁<span class="punto"></span>'; }
-    const detalle = motivoSync ? ` (${motivoSync})` : '';
+    const detalle = motivoSync ? ` (${motivoSync})` : (ultimaResumen ? ` · última: ${fmt(ultimaResumen.cuando)}` : '');
     if (bar) { bar.hidden = false; bar.className = 'syncbar pendiente'; bar.textContent = `↑ Hay cambios sin subir${detalle} — pulsa aquí para sincronizar`; }
+    return;
   }
+  // Sin cambios pendientes: se muestra el resumen de la última sincronización
+  // COMPLETA. Antes se quedaba pegado el último mensaje de progreso ("ordenando
+  // archivos…") aunque la sincronización ya hubiera terminado.
+  const res = ultimaResumen ? resumenTexto(ultimaResumen) : '';
+  if (ultimaResumen && ultimaResumen.archivosAplazados) {
+    if (syncBtn) { syncBtn.className = 'iconbtn pendiente'; syncBtn.title = 'Fotos y PDF pendientes de WiFi'; syncBtn.innerHTML = '☁<span class="punto"></span>'; }
+    if (bar) { bar.hidden = false; bar.className = 'syncbar pendiente'; bar.textContent = `↑ Fotos y PDF pendientes de WiFi · ${res} — pulsa aquí para sincronizar`; }
+    return;
+  }
+  if (ultimaResumen) {
+    if (bar) { bar.hidden = false; bar.className = 'syncbar'; bar.textContent = `☁ Última sincronización: ${fmt(ultimaResumen.cuando)} · ${res}`; }
+  }
+}
+
+// Texto corto con lo que hizo la última sincronización.
+function resumenTexto(r) {
+  const p = [];
+  if (r.subidos) p.push(`${r.subidos} subidos`);
+  if (r.bajados) p.push(`${r.bajados} bajados`);
+  if (r.papelera) p.push(`${r.papelera} a la papelera`);
+  if (r.reparados) p.push(`${r.reparados} recuperados`);
+  return p.length ? p.join(' · ') : 'sin cambios';
 }
 
 async function refrescarBotonSync() {
@@ -1588,8 +1621,10 @@ async function estadoSyncTexto() {
   if (ultimoError) return '⚠️ El último intento falló: ' + esc(ultimoError.mensaje) + ' (' + fmt(ultimoError.cuando) + ')';
   if (sucio) return '☁︎ Hay cambios pendientes de subir. Pulsa el botón ☁ de la barra superior.';
   if (!drive.configurado()) return 'Sincronización no configurada.';
+  if (ultimaResumen && ultimaResumen.archivosAplazados) return '↑ Los datos están al día. Faltan fotos y PDF por subir: esperan a WiFi.';
   const u = await drive.ultimaSync();
-  return u ? '☁ Todo sincronizado. Última: ' + fmt(u) : '☁ Todo sincronizado.';
+  const res = ultimaResumen ? ' · ' + resumenTexto(ultimaResumen) : '';
+  return u ? '☁ Todo sincronizado. Última: ' + fmt(u) + res : '☁ Todo sincronizado.';
 }
 
 function registroDialog() {
@@ -1903,6 +1938,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal
 
 // Sincronización automática: al cambiar datos, al recuperar red y al volver a la app.
 let sucio = false;   // hay cambios locales que aún no han subido a Drive
+let ultimaResumen = null;   // resumen de la última sincronización completada
 db.onWrite(() => { versionLocal++; sucio = true; programarSync(); pintarEstadoSync(); });
 document.getElementById('syncBar').onclick = () => { if (!sincronizando) sincronizarDrive(); };
 window.addEventListener('online', () => programarSync(2000));
@@ -1939,7 +1975,9 @@ async function init() {
   checkReminders();
   setInterval(checkReminders, 60000);
   programarRecordatorios();
-  // Cada 5 minutos, si hay algo pendiente y las condiciones lo permiten.
+  // Cada 5 minutos se pregunta a Drive si hay novedades (1 petición pequeña).
+  // Antes esto quedaba bloqueado por 'solo WiFi', así que los cambios hechos en
+  // otro dispositivo no llegaban nunca hasta abrir la app.
   setInterval(async () => {
     // Vigilante: si una sincronización lleva colgada demasiado, se libera.
     if (sincronizando && syncInicio && Date.now() - syncInicio > 12 * 60 * 1000) {

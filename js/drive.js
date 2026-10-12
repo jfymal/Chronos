@@ -905,16 +905,25 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
   }  // fin de trabajarArchivos()
 
   // --- 3) Los archivos, aislados: si fallan, el índice ya está a salvo ---
-  let res = { subidos: 0, bajados: 0, movidos: 0, papelera: 0 };
-  try {
-    res = await trabajarArchivos();
-  } catch (err) {
-    console.warn('Chronos: fallo en la parte de archivos (el índice sí se subió)', err);
-    fallosArchivos++;
-  }
-  if (fallosArchivos) {
-    await metaPut({ k: 'forzar_escaneo', valor: Date.now() });
-    fallosArchivos = 0;
+  // Los datos ya están arriba. Las fotos y los PDF solo se mueven si se permite
+  // (con WiFi, si así está configurado); lo que no, queda para la próxima vez.
+  const permitirArchivos = opts.permitirArchivos !== false;
+  let res = { subidos: 0, bajados: 0, movidos: 0, papelera: 0, reparados: 0 };
+  let archivosAplazados = false;
+  if (!permitirArchivos) {
+    archivosAplazados = true;
+    onProgreso('Datos al día. Fotos y PDF: se subirán con WiFi.');
+  } else {
+    try {
+      res = await trabajarArchivos();
+    } catch (err) {
+      console.warn('Chronos: fallo en la parte de archivos (el índice sí se subió)', err);
+      fallosArchivos++;
+    }
+    if (fallosArchivos) {
+      await metaPut({ k: 'forzar_escaneo', valor: Date.now() });
+      fallosArchivos = 0;
+    }
   }
 
   // --- 4) Anotar los fileId definitivos en el índice (mejor esfuerzo) ---
@@ -943,6 +952,7 @@ export async function sincronizar(onProgreso = () => {}, opts = {}) {
     movidos: res.movidos,
     papelera: res.papelera,
     reparados: res.reparados || 0,
+    archivosAplazados,
   };
 }
 
