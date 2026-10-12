@@ -567,7 +567,7 @@ async function entryHtml(e, selMode) {
     : '';
   if (e.tipo === 'foto') {
     const u = await blobUrl(e.blobId);
-    body = u ? `<img class="entryimg" src="${u}" alt="" loading="lazy">` : (enDrive || sinArchivo);
+    body = u ? `<img class="entryimg" src="${u}" alt="" loading="lazy" data-act="ver-foto" data-id="${e.id}" title="Toca para verla a tamaño completo">` : (enDrive || sinArchivo);
   } else if (e.tipo === 'pdf') {
     const u = await blobUrl(e.blobId);
     const nom = e.nombre || 'documento.pdf';
@@ -1381,6 +1381,21 @@ function anota(msg) {
   if (registro.length > 400) registro.shift();
 }
 
+// Ver la foto a tamaño completo: la de la lista es reducida para que la obra se
+// lea cómoda; aquí se muestra el archivo guardado entero, a pantalla completa.
+async function verFoto(entryId) {
+  const e = (entries.find((x) => x.id === entryId)) || (await db.get('entries', entryId));
+  if (!e || !e.blobId) return;
+  const u = await blobUrl(e.blobId);
+  if (!u) { alert('Esta foto no está en este dispositivo.\n\nDescárgala primero desde la ficha.'); return; }
+  modalRoot.innerHTML = `<div class="foto-zoom" id="fz">`
+    + `<img src="${u}" alt="">`
+    + (e.texto ? `<div class="fz-pie">${esc(e.texto)}</div>` : '')
+    + `<button class="fz-cerrar" id="fz_x">✕</button></div>`;
+  const ov = document.getElementById('fz');
+  ov.onclick = () => closeModal();
+}
+
 // Foto y descripción en la MISMA pantalla: la foto ya está guardada al abrirse,
 // así que se puede guardar solo con la foto, solo con la descripción o con las dos.
 // Se abre al instante (sin esperar a refrescar la obra entera) y, si no hay foto,
@@ -1901,6 +1916,7 @@ view.addEventListener('click', async (ev) => {
     if (e) return openEditor(e.obraId, e);
     return;
   }
+  if (act === 'ver-foto') { verFoto(id); return; }
   if (act === 'ver-pdf') {
     const e = entries.find((x) => x.id === id);
     const box = document.getElementById('pdf_' + id);

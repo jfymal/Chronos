@@ -163,6 +163,23 @@ a { color: inherit; text-decoration: none; }
   background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px;
 }
 .entrybody { flex: 1; min-width: 0; }
+/* Ver la foto a tamaño completo (la de la lista va reducida) */
+.entryimg { cursor: zoom-in; }
+.foto-zoom {
+  position: fixed; inset: 0; z-index: 60; background: #000;
+  display: flex; align-items: center; justify-content: center;
+}
+.foto-zoom img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.foto-zoom .fz-pie {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 14px 16px 18px;
+  background: linear-gradient(transparent, rgba(0,0,0,.85)); color: #fff;
+  font-size: .92rem; white-space: pre-wrap;
+}
+.foto-zoom .fz-cerrar {
+  position: absolute; top: 11px; right: 11px; width: 42px; height: 42px;
+  border: 0; border-radius: 50%; background: rgba(0,0,0,.55); color: #fff;
+  font-size: 1.1rem; cursor: pointer;
+}
 .entryimg {
   /* A la mitad: antes ocupaban todo el ancho y 62vh de alto */
   width: auto; max-width: 50%; max-height: 31vh; object-fit: contain;
