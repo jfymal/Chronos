@@ -230,7 +230,9 @@ function pickFiles(accept, capture, cb) {
   inp.type = 'file';
   inp.accept = accept;
   if (capture) inp.capture = capture;
-  inp.multiple = accept.startsWith('image');
+  // OJO: si se permite elegir varios archivos, Android IGNORA la cámara y abre
+  // la galería. Por eso "Hacer foto" abría la galería en algunos móviles.
+  inp.multiple = !capture && accept.startsWith('image');
   inp.onchange = () => { const fs = [...inp.files]; if (fs.length) cb(fs); };
   inp.click();
 }
