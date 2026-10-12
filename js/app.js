@@ -1393,7 +1393,49 @@ async function verFoto(entryId) {
     + (e.texto ? `<div class="fz-pie">${esc(e.texto)}</div>` : '')
     + `<button class="fz-cerrar" id="fz_x">✕</button></div>`;
   const ov = document.getElementById('fz');
-  ov.onclick = () => closeModal();
+  const img = ov.querySelector('img');
+  let esc = 1, tx = 0, ty = 0, d0 = 0, e0 = 1, movio = false, px = 0, py = 0, ultimoToque = 0;
+  const pinta = () => { img.style.transform = `translate(${tx}px, ${ty}px) scale(${esc})`; };
+  const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  const reinicia = () => { esc = 1; tx = 0; ty = 0; pinta(); };
+
+  ov.addEventListener('touchstart', (ev) => {
+    if (ev.touches.length === 2) {               // pellizcar
+      d0 = dist(ev.touches); e0 = esc; movio = true; return;
+    }
+    if (ev.touches.length === 1) {
+      const t = ev.touches[0];
+      px = t.clientX; py = t.clientY; movio = false;
+      const ahora = Date.now();
+      if (ahora - ultimoToque < 300) {           // doble toque: ampliar / volver
+        if (esc > 1.05) reinicia(); else { esc = 2.5; }
+        pinta(); movio = true;
+      }
+      ultimoToque = ahora;
+    }
+  }, { passive: true });
+
+  ov.addEventListener('touchmove', (ev) => {
+    if (ev.touches.length === 2) {
+      const f = dist(ev.touches) / (d0 || 1);
+      esc = Math.min(6, Math.max(1, e0 * f));
+      movio = true; pinta(); ev.preventDefault(); return;
+    }
+    if (ev.touches.length === 1 && esc > 1.05) {  // arrastrar con la foto ampliada
+      const t = ev.touches[0];
+      tx += t.clientX - px; ty += t.clientY - py;
+      px = t.clientX; py = t.clientY;
+      movio = true; pinta(); ev.preventDefault();
+    }
+  }, { passive: false });
+
+  ov.addEventListener('touchend', (ev) => {
+    if (ev.touches.length) return;
+    if (esc <= 1.05) reinicia();                  // al soltar sin zoom, se centra
+  }, { passive: true });
+
+  // Un toque simple cierra; si ha habido gesto (zoom o arrastre), no.
+  ov.onclick = () => { if (!movio) closeModal(); };
 }
 
 // Foto y descripción en la MISMA pantalla: la foto ya está guardada al abrirse,
