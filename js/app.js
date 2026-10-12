@@ -27,7 +27,7 @@ let modoSeleccion = false;
 let blobsRemotos = {};   // blobId -> {file, nombre, tipo} en Drive (modo bajo demanda)
 const urlCache = new Map();
 
-const AJUSTES_DEFECTO = { comprimir: true, maxDim: 1920, calidad: 0.82, autoSync: true, soloWifi: true, horaRecordatorio: '08:00', bajoDemanda: false, permitirDedo: false };
+const AJUSTES_DEFECTO = { comprimir: true, maxDim: 1920, calidad: 0.82, autoSync: true, horaRecordatorio: '08:00', bajoDemanda: false, permitirDedo: false };
 let ajustes = { ...AJUSTES_DEFECTO };
 async function cargarAjustes() {
   const m = await db.get('meta', 'ajustes');
@@ -1453,9 +1453,6 @@ async function sincronizarDrive(opts = {}) {
       interactivo: !silencioso,
       // true = SÍ hay cambios locales que subir (nombre claro, sin dobles negaciones)
       hayCambiosLocales: versionLocal > versionSincronizada,
-      // Fotos y PDF solo se mueven con WiFi (si está activado); el resto de datos
-      // se sincroniza igual con datos móviles.
-      permitirArchivos: !ajustes.soloWifi || enWifi(),
       // El índice ya está a salvo: refrescamos la pantalla para que se vea al instante
       onIndice: async () => { await reload(); route(); },
     });
@@ -1569,19 +1566,13 @@ function descargaDialog() {
 function autoSyncDialog() {
   openModal(`
     <h2>Sincronización automática</h2>
-    <p class="hint">Además del botón ☁, Chronos puede sincronizar sola al abrir la app, al recuperar la conexión y unos segundos después de cada cambio.</p>
+    <p class="hint">Chronos sincroniza sola al abrir la app, al recuperar la conexión y unos segundos después de cada cambio. Cuando hay algo pendiente aparece el aviso <b>«Hay cambios sin subir»</b> y el botón ☁ se marca: pulsa ahí para subirlo cuando quieras. No espera a ninguna red: si sincronizas con datos móviles, el gasto es tuyo.</p>
     <div class="menu-list">
       <button data-auto="1">${ajustes.autoSync ? '✅ ' : ''}Sincronizar automáticamente</button>
-      <button data-wifi="1">${ajustes.soloWifi ? '✅ ' : ''}Solo con WiFi <span class="hint">(no gastar datos móviles)</span></button>
     </div>
     <div class="modalactions"><button class="btn" id="a_close">Cerrar</button></div>`, (m) => {
     m.querySelector('[data-auto]').onclick = async () => {
       await guardarAjustes({ autoSync: !ajustes.autoSync });
-      closeModal();
-      autoSyncDialog();
-    };
-    m.querySelector('[data-wifi]').onclick = async () => {
-      await guardarAjustes({ soloWifi: !ajustes.soloWifi });
       closeModal();
       autoSyncDialog();
     };
@@ -2001,8 +1992,9 @@ async function init() {
   route();
   refrescarBotonSync();
   if (drive.configurado()) {
-    const u = await drive.ultimaSync();
-    if (minutosDesde(u) > 5) programarSync(4000);
+    // Al abrir la app, ponerse al día siempre: es una consulta pequeña y así
+    // los cambios hechos en otro dispositivo aparecen enseguida.
+    programarSync(1500);
   }
   checkReminders();
   setInterval(checkReminders, 60000);
