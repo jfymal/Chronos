@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Kronos Obra</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#12161c">
+<style>
+:root{--bg:#12161c;--card:#1b222c;--card2:#232c38;--line:#2f3947;--text:#e8edf4;--muted:#93a1b3;--accent:#2f7fe0;--danger:#e2564a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:System-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding-bottom:90px}
+header{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg);border-bottom:1px solid var(--line)}
+header h1{font-size:1.05rem;margin:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+header button{background:none;border:0;color:var(--text);font-size:1.35rem;padding:4px 8px;cursor:pointer}
+main{padding:12px;display:flex;flex-direction:column;gap:10px}
+.btn{border:1px solid var(--line);background:var(--card);color:var(--text);padding:11px 14px;border-radius:10px;font-size:.95rem;cursor:pointer}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.btn.danger{color:var(--danger)}
+.btn.grande{width:100%;padding:14px;font-size:1rem}
+.btnmini{border:0;background:none;color:var(--muted);text-decoration:underline;font-size:.82rem;padding:2px 6px;cursor:pointer}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+.vtop{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.vtop b{font-size:1rem}
+.vtop span{color:var(--muted);font-size:.85rem}
+.apunte{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:flex;gap:10px}
+.num{color:var(--muted);font-variant-numeric:tabular-nums;font-weight:600;min-width:26px}
+.apunte img{width:100%;max-width:220px;border-radius:9px;background:#000;cursor:zoom-in;display:block;margin-bottom:6px}
+.texto{white-space:pre-wrap;word-wrap:break-word}
+.acciones{display:flex;flex-wrap:wrap;gap:2px;margin-top:6px}
+input,textarea,select{width:100%;background:var(--card2);border:1px solid var(--line);color:var(--text);border-radius:9px;padding:11px;font-size:.95rem;font-family:inherit}
+label{display:block;font-size:.85rem;color:var(--muted);margin:10px 0 4px}
+h2{font-size:1.05rem;margin:0 0 4px}
+.hint{color:var(--muted);font-size:.85rem;margin:4px 0}
+#modal{position:fixed;inset:0;z-index:30;display:none}
+#modal.on{display:block}
+.fondo{position:absolute;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-end}
+.caja{background:var(--card);width:100%;max-height:92vh;overflow:auto;border-radius:16px 16px 0 0;padding:16px}
+@media(min-width:620px){.fondo{align-items:center;justify-content:center}.caja{max-width:560px;border-radius:16px}}
+.fila{display:flex;gap:8px;margin-top:14px;justify-content:flex-end;flex-wrap:wrap}
+.barra{position:fixed;left:0;right:0;bottom:0;display:flex;gap:10px;padding:12px;background:var(--bg);border-top:1px solid var(--line);z-index:15}
+.prev{background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:10px;font-size:.88rem;white-space:pre-wrap;max-height:34vh;overflow:auto}
+.vacio{color:var(--muted);text-align:center;padding:26px 10px}
+#cam{position:fixed;inset:0;z-index:50;background:#000;display:flex;flex-direction:column}
+#cam video{flex:1;width:100%;height:100%;object-fit:contain;background:#000}
+#cam .cb{display:flex;gap:10px;padding:12px;background:var(--bg)}
+/* visor */
+#zoom{position:fixed;inset:0;z-index:40;background:#000;display:none;touch-action:none;overflow:hidden}
+#zoom.on{display:flex;align-items:center;justify-content:center}
+#zoom img{max-width:100%;max-height:100%;object-fit:contain;will-change:transform;transform-origin:center}
+#zoom .x{position:absolute;top:12px;right:12px;width:42px;height:42px;border:0;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;font-size:1.1rem}
+#zoom .pie{position:absolute;left:0;right:0;bottom:0;padding:14px 16px 18px;background:linear-gradient(transparent,rgba(0,0,0,.85));color:#fff;font-size:.92rem;white-space:pre-wrap}
+.aviso{background:#3a2c12;border:1px solid #6b5522;color:#ffd894;border-radius:10px;padding:10px;font-size:.88rem}
+</style>
+</head>
+<body>
+<header>
+  <button id="atras" hidden>&#8249;</button>
+  <h1 id="titulo">Kronos Obra</h1>
+  <button id="cfg">&#9881;</button>
+</header>
+<main id="vista"></main>
+<div id="modal"></div>
+<div id="zoom"><img id="zi" alt=""><button class="x" id="zx">&#10005;</button><div class="pie" id="zp"></div></div>
+<script src="capacitor.js"></script>
+<script>
+/* ============ almacén local ============ */
+const DB='kronos-db';
+function abrirBase(){
+  return new Promise((res,rej)=>{
+    const p=indexedDB.open(DB,1);
+    p.onupgradeneeded=()=>{const d=p.result;['visitas','apuntes','fotos'].forEach(s=>{if(!d.objectStoreNames.contains(s))d.createObjectStore(s,{keyPath:'id'});});};
+    p.onsuccess=()=>res(p.result); p.onerror=()=>rej(p.error);
+  });
+}
+let _b=null; const base=async()=>_b||(_b=await abrirBase());
+const req=r=>new Promise((res,rej)=>{r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});
+async function todos(s){return req((await base()).transaction(s).objectStore(s).getAll());}
+async function uno(s,k){return req((await base()).transaction(s).objectStore(s).get(k));}
+async function guarda(s,v){return req((await base()).transaction(s,'readwrite').objectStore(s).put(v));}
+async function borra(s,k){return req((await base()).transaction(s,'readwrite').objectStore(s).delete(k));}
+const uid=()=>Math.random().toString(36).slice(2,9)+Date.now().toString(36);
+const pad=n=>String(n).padStart(2,'0');
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const hoy=()=>new Date().toLocaleDateString('es-ES');
+const slug=s=>String(s||'foto').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9]+/g,'-').replace(/^-+|-+$/g,'').toLowerCase().slice(0,40)||'foto';
+
+/* ============ ajustes (recuerdan lo que usas) ============ */
+const AJ={para:'juanfran.221gestion@gmail.com',obras:['Son Roca','Joan Mestre 20','Arc de Sant Marti 46','Reis Catolics 74']};
+try{Object.assign(AJ,JSON.parse(localStorage.getItem('kronos-aj')||'{}'));}catch(_){}
+const guardaAj=()=>{try{localStorage.setItem('kronos-aj',JSON.stringify(AJ));}catch(_){}};
+
+/* ============ Capacitor ============ */
+function capPlugin(n){const C=window.capacitorExports;if(!C||!C.registerPlugin)return null;try{return C.registerPlugin(n);}catch(_){return null;}}
+
+/* ============ fotos ============ */
+const blobUrl=(b)=>URL.createObjectURL(b);
+function camaraEnVivo(){
+  return new Promise((res,rej)=>{
+    const cont=document.createElement('div');
+    cont.id='cam';
+    cont.innerHTML='<video id="cv" playsinline autoplay></video><div class="cb">'
+      +'<button class="btn" id="cx" style="flex:1">Cancelar</button>'
+      +'<button class="btn primary" id="cs" style="flex:2">Capturar</button></div>';
+    document.body.appendChild(cont);
+    const v=cont.querySelector('#cv');
+    let stream=null, hecho=false;
+    const cerrar=()=>{ if(stream) stream.getTracks().forEach(t=>t.stop()); cont.remove(); };
+    navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1600}},audio:false})
+      .then(st=>{ stream=st; v.srcObject=st; })
+      .catch(e=>{ cerrar(); rej(e); });
+    cont.querySelector('#cs').onclick=()=>{
+      if(hecho||!stream) return; hecho=true;
+      const w=v.videoWidth||1280, h=v.videoHeight||960;
+      const c=document.createElement('canvas'); c.width=w; c.height=h;
+      c.getContext('2d').drawImage(v,0,0,w,h);
+      c.toBlob(b=>{ cerrar(); res(new File([b],'foto.jpg',{type:'image/jpeg'})); },'image/jpeg',0.9);
+    };
+    cont.querySelector('#cx').onclick=()=>{ cerrar(); res(null); };
+  });
+}
+
+function leerImagen(file){return new Promise((res,rej)=>{const u=URL.createObjectURL(file);const i=new Image();i.onload=()=>{URL.revokeObjectURL(u);res(i);};i.onerror=()=>{URL.revokeObjectURL(u);rej(new Error('No se pudo leer la imagen'));};i.src=u;});}
+async function comprimir(file,max,cal){
+  const img=await leerImagen(file);
+  let w=img.naturalWidth,h=img.naturalHeight;
+  const f=Math.min(1,max/Math.max(w,h)); w=Math.round(w*f); h=Math.round(h*f);
+  const c=document.createElement('canvas'); c.width=w; c.height=h;
+  c.getContext('2d').drawImage(img,0,0,w,h);
+  const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',cal));
+  return blob||file;
+}
+async function hacerFoto(){
+  // Cámara DENTRO de la app: funciona en cualquier móvil (incluido el Pixel),
+  // sin depender del selector de Android.
+  if(navigator.mediaDevices && navigator.mediaDevices.getUserMedia){
+    try{ const f=await camaraEnVivo(); if(f) return f; }catch(_){}
+  }
+  const Cam=capPlugin('Camera');
+  if(Cam&&Cam.getPhoto){
+    const f=await Cam.getPhoto({quality:85,allowEditing:false,resultType:'uri',source:'CAMERA',saveToGallery:false,width:1600,correctOrientation:true});
+    if(!f||!f.webPath)return null;
+    const b=await (await fetch(f.webPath)).blob();
+    return new File([b],'foto.jpg',{type:b.type||'image/jpeg'});
+  }
+  return new Promise(res=>{
+    const i=document.createElement('input'); i.type='file';
+    i.setAttribute('accept','image/*'); i.setAttribute('capture','environment');
+    i.style.cssText='position:fixed;left:-9999px'; document.body.appendChild(i);
+    i.onchange=()=>{const f=i.files&&i.files[0];i.remove();res(f||null);};
+    i.click(); setTimeout(()=>{if(document.body.contains(i))i.remove();},120000);
+  });
+}
+
+/* ============ navegación ============ */
+const vista=document.getElementById('vista');
+const titulo=document.getElementById('titulo');
+const atras=document.getElementById('atras');
+let visitas=[], apuntes=[];
+const apuntesDe=id=>apuntes.filter(a=>a.visitaId===id).sort((x,y)=>x.orden-y.orden);
+
+function ir(h){ if(location.hash===h){ruta();} else {location.hash=h;} }
+async function cargar(){ visitas=(await todos('visitas')); apuntes=(await todos('apuntes')); }
+
+async function ruta(){
+  await cargar();
+  const h=location.hash||'#/';
+  const m=h.match(/^#\/v\/(.+)$/);
+  if(m){
+    const v=visitas.find(x=>x.id===m[1]);
+    if(!v){ ir('#/'); return; }
+    titulo.textContent=v.obra||'Visita'; atras.hidden=false; pintarVisita(v); return;
+  }
+  titulo.textContent='Kronos Obra'; atras.hidden=true; pintarInicio();
+}
+
+function pintarInicio(){
+  const abiertas=visitas.filter(v=>!v.enviada).sort((a,b)=>(b.creada||'').localeCompare(a.creada||''));
+  const enviadas=visitas.filter(v=>v.enviada).sort((a,b)=>(b.enviadaEl||'').localeCompare(a.enviadaEl||''));
+  let h=`<button class="btn primary grande" id="nueva">+ Nueva visita</button>`;
+  if(!visitas.length) h+=`<div class="vacio">Sin visitas todavía.<br>Pulsa «Nueva visita» para empezar.</div>`;
+  if(abiertas.length){
+    h+=`<h2 style="margin-top:10px">En curso</h2>`;
+    h+=abiertas.map(v=>tarjetaVisita(v)).join('');
+  }
+  if(enviadas.length){
+    h+=`<h2 style="margin-top:10px">Enviadas</h2>`;
+    h+=enviadas.map(v=>tarjetaVisita(v)).join('');
+  }
+  vista.innerHTML=h;
+  document.getElementById('nueva').onclick=()=>nuevaVisita();
+  vista.querySelectorAll('[data-abrir]').forEach(b=>b.onclick=()=>ir('#/v/'+b.dataset.abrir));
+}
+function tarjetaVisita(v){
+  const n=apuntesDe(v.id).length;
+  const fotos=apuntesDe(v.id).filter(a=>a.fotoId).length;
+  return `<div class="card" data-abrir="${v.id}" style="cursor:pointer">
+    <div class="vtop"><b>${esc(v.obra||'(sin nombre)')}</b><span>${esc(v.fecha||'')}</span></div>
+    <div class="hint">${n} apunte${n===1?'':'s'} · ${fotos} foto${fotos===1?'':'s'}${v.enviada?' · <b>enviada ✓</b>':''}</div>
+  </div>`;
+}
+
+async function nuevaVisita(){
+  const lista=AJ.obras.map(o=>`<option value="${esc(o)}">`).join('');
+  dialogo(`<h2>Nueva visita</h2>
+    <label>Obra</label>
+    <input id="n_obra" list="obras" placeholder="Escribe o elige la obra" value="${esc(AJ.obras[0]||'')}">
+    <datalist id="obras">${lista}</datalist>
+    <label>Fecha</label>
+    <input id="n_fecha" value="${hoy()}">
+    <div class="fila"><button class="btn" data-x>Cancelar</button><button class="btn primary" id="n_ok">Empezar</button></div>`,
+  m=>{
+    m.querySelector('#n_ok').onclick=async()=>{
+      const obra=m.querySelector('#n_obra').value.trim();
+      if(!obra){alert('Pon el nombre de la obra.');return;}
+      const v={id:uid(),obra,fecha:m.querySelector('#n_fecha').value.trim()||hoy(),creada:new Date().toISOString(),enviada:false};
+      await guarda('visitas',v);
+      if(!AJ.obras.includes(obra)){AJ.obras.unshift(obra);guardaAj();}
+      cierra(); ir('#/v/'+v.id);
+    };
+    setTimeout(()=>m.querySelector('#n_obra').focus(),60);
+  });
+}
+
+async function pintarVisita(v){
+  const as=apuntesDe(v.id);
+  let h='';
+  if(!as.length) h=`<div class="vacio">Aún no hay nada.<br>Haz una foto o escribe un comentario.</div>`;
+  for(let i=0;i<as.length;i++){
+    const a=as[i];
+    let foto='';
+    if(a.fotoId){const f=await uno('fotos',a.fotoId); if(f&&f.blob) foto=`<img src="${blobUrl(f.blob)}" data-ver="${a.id}" alt="">`;}
+    h+=`<div class="apunte"><div class="num">${pad(i+1)}</div><div style="flex:1;min-width:0">
+      ${foto}
+      ${a.texto?`<div class="texto">${esc(a.texto)}</div>`:'<div class="hint">(sin comentario)</div>'}
+      <div class="acciones">
+        <button class="btnmini" data-com="${a.id}">${a.texto?'editar comentario':'poner comentario'}</button>
+        ${a.fotoId?'':`<button class="btnmini" data-foto="${a.id}">añadir foto</button>`}
+        <button class="btnmini" data-del="${a.id}">borrar</button>
+      </div></div></div>`;
+  }
+  h+=`</div><div class="barra">
+      <button class="btn primary" style="flex:1" id="bfoto">📷 Hacer foto</button>
+      <button class="btn" style="flex:1" id="btexto">💬 Comentario</button></div>`;
+  h+=`<div style="height:6px"></div>`;
+  if(as.length) h+=`<button class="btn primary grande" id="enviar">✉️ Enviar visita</button>`;
+  if(v.enviada) h+=`<button class="btn danger grande" id="borrarvisita">Borrar esta visita</button>`;
+  vista.innerHTML=h;
+
+  document.getElementById('bfoto').onclick=()=>anadirFoto(v);
+  document.getElementById('btexto').onclick=()=>anadirTexto(v,null);
+  const en=document.getElementById('enviar'); if(en) en.onclick=()=>pantallaEnviar(v);
+  const bv=document.getElementById('borrarvisita'); if(bv) bv.onclick=()=>borrarVisita(v);
+  vista.querySelectorAll('[data-ver]').forEach(el=>el.onclick=async()=>verFoto(el.dataset.ver));
+  vista.querySelectorAll('[data-com]').forEach(b=>b.onclick=()=>anadirTexto(v,b.dataset.com));
+  vista.querySelectorAll('[data-foto]').forEach(b=>b.onclick=()=>anadirFoto(v,b.dataset.foto));
+  vista.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>borrarApunte(b.dataset.del,v));
+}
+
+const siguienteOrden=v=>{const as=apuntesDe(v.id);return as.length?(as[as.length-1].orden||0)+1:1;};
+
+async function anadirFoto(v,apunteId){
+  let file=null;
+  try{ file=await hacerFoto(); }
+  catch(e){ alert('No se pudo abrir la cámara:\n\n'+((e&&e.message)||e)); return; }
+  if(!file) return;
+  try{
+    const blob=await comprimir(file,1600,0.78);
+    const fotoId=uid();
+    await guarda('fotos',{id:fotoId,blob,creada:new Date().toISOString()});
+    if(apunteId){
+      const a=apuntes.find(x=>x.id===apunteId);
+      if(a){ a.fotoId=fotoId; await guarda('apuntes',a); }
+    } else {
+      await guarda('apuntes',{id:uid(),visitaId:v.id,orden:siguienteOrden(v),tipo:'foto',texto:'',fotoId});
+    }
+    ruta();
+  }catch(e){ alert('No se pudo guardar la foto:\n\n'+((e&&e.message)||e)); }
+}
+
+async function anadirTexto(v,apunteId){
+  const a=apunteId?apuntes.find(x=>x.id===apunteId):null;
+  dialogo(`<h2>${a?'Comentario':'Nuevo comentario'}</h2>
+    <label>Comentario</label>
+    <textarea id="c_t" rows="4" placeholder="¿Qué has visto?">${esc(a?a.texto:'')}</textarea>
+    <div class="fila"><button class="btn" data-x>Cancelar</button><button class="btn primary" id="c_ok">Guardar</button></div>`,
+  m=>{
+    m.querySelector('#c_ok').onclick=async()=>{
+      const t=m.querySelector('#c_t').value.trim();
+      if(a){ if(!t && !a.fotoId){ await borrar('apuntes',a.id); } else { a.texto=t; await guarda('apuntes',a); } }
+      else { if(!t){ return; } await guarda('apuntes',{id:uid(),visitaId:v.id,orden:siguienteOrden(v),tipo:'texto',texto:t,fotoId:null}); }
+      cierra(); ruta();
+    };
+    setTimeout(()=>m.querySelector('#c_t').focus(),60);
+  });
+}
+
+async function borrarApunte(id,v){
+  const a=apuntes.find(x=>x.id===id);
+  if(!a) return;
+  if(!confirm('¿Borrar este apunte?')) return;
+  if(a.fotoId) await borra('fotos',a.fotoId);
+  await borra('apuntes',id);
+  ruta();
+}
+async function borrarVisita(v){
+  if(!confirm('¿Borrar la visita y sus fotos?\n\nNo se puede deshacer.')) return;
+  for(const a of apuntesDe(v.id)){ if(a.fotoId) await borra('fotos',a.fotoId); await borra('apuntes',a.id); }
+  await borra('visitas',v.id);
+  ir('#/');
+}
+
+/* ============ visor con zoom ============ */
+const zoom=document.getElementById('zoom'), zi=document.getElementById('zi'), zp=document.getElementById('zp');
+let zEsc=1,tx=0,ty=0,d0=0,e0=1,movio=false,px=0,py=0,ultimo=0;
+const pinta=()=>{zi.style.transform=`translate(${tx}px,${ty}px) scale(${zEsc})`;};
+const reinicia=()=>{zEsc=1;tx=0;ty=0;pinta();};
+const dist=t=>Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY);
+zoom.addEventListener('touchstart',ev=>{
+  if(ev.touches.length===2){d0=dist(ev.touches);e0=zEsc;movio=true;return;}
+  if(ev.touches.length===1){
+    const t=ev.touches[0]; px=t.clientX; py=t.clientY; movio=false;
+    const ahora=Date.now();
+    if(ahora-ultimo<300){ if(zEsc>1.05) reinicia(); else zEsc=2.5; pinta(); movio=true; }
+    ultimo=ahora;
+  }
+},{passive:true});
+zoom.addEventListener('touchmove',ev=>{
+  if(ev.touches.length===2){ const f=dist(ev.touches)/(d0||1); zEsc=Math.min(6,Math.max(1,e0*f)); movio=true; pinta(); ev.preventDefault(); return; }
+  if(ev.touches.length===1&&zEsc>1.05){ const t=ev.touches[0]; tx+=t.clientX-px; ty+=t.clientY-py; px=t.clientX; py=t.clientY; movio=true; pinta(); ev.preventDefault(); }
+},{passive:false});
+zoom.addEventListener('touchend',ev=>{ if(!ev.touches.length&&zEsc<=1.05) reinicia(); },{passive:true});
+zoom.onclick=()=>{ if(!movio) cerrarZoom(); };
+document.getElementById('zx').onclick=cerrarZoom;
+function cerrarZoom(){ zoom.classList.remove('on'); zi.removeAttribute('src'); reinicia(); }
+async function verFoto(apunteId){
+  const a=apuntes.find(x=>x.id===apunteId);
+  const f=a&&a.fotoId?await uno('fotos',a.fotoId):null;
+  if(!f||!f.blob) return;
+  zi.src=blobUrl(f.blob); zp.textContent=a.texto||''; zp.style.display=a.texto?'block':'none';
+  reinicia(); zoom.classList.add('on');
+}
+
+/* ============ enviar ============ */
+async function pantallaEnviar(v){
+  const as=apuntesDe(v.id);
+  const lista=AJ.obras.map(o=>`<option value="${esc(o)}">`).join('');
+  const previa=as.map((a,i)=>`${pad(i+1)} — ${a.texto||'(sin comentario)'}`).join('\n');
+  dialogo(`<h2>Enviar visita</h2>
+    <label>Obra</label>
+    <input id="e_obra" list="obras2" value="${esc(v.obra||'')}"><datalist id="obras2">${lista}</datalist>
+    <label>Fecha</label>
+    <input id="e_fecha" value="${esc(v.fecha||hoy())}">
+    <label>Para</label>
+    <input id="e_para" type="email" value="${esc(AJ.para)}">
+    <label>Asunto</label>
+    <input id="e_asunto">
+    <label>Esto es lo que se enviará</label>
+    <div class="prev" id="e_prev"></div>
+    <p class="hint">Las fotos van adjuntas como <b>01_…, 02_…</b> y en el mismo orden que aquí.</p>
+    <button class="btn" id="e_copiar" style="width:100%;margin-top:10px">Copiar asunto</button>
+    <div class="fila"><button class="btn" data-x>Cancelar</button><button class="btn primary" id="e_ok">Enviar por email</button></div>`,
+  m=>{
+    const obra=m.querySelector('#e_obra'), fecha=m.querySelector('#e_fecha');
+    const pintar=()=>{ m.querySelector('#e_asunto').value = `${obra.value.trim()} — ${fecha.value.trim()}`; };
+    obra.oninput=pintar; fecha.oninput=pintar; pintar();
+    m.querySelector('#e_copiar').onclick=()=>{
+      const t=m.querySelector('#e_asunto').value;
+      try{ navigator.clipboard.writeText(t); }catch(_){}
+      alert('Asunto copiado. Pégalo en el campo «Asunto» de Gmail.');
+    };
+    m.querySelector('#e_prev').textContent=previa;
+    m.querySelector('#e_ok').onclick=async()=>{
+      const datos={obra:obra.value.trim(),fecha:fecha.value.trim(),para:m.querySelector('#e_para').value.trim(),asunto:m.querySelector('#e_asunto').value.trim()};
+      if(!datos.obra){alert('Pon el nombre de la obra.');return;}
+      v.obra=datos.obra; v.fecha=datos.fecha; await guarda('visitas',v);
+      if(!AJ.obras.includes(datos.obra)){AJ.obras.unshift(datos.obra);}
+      if(datos.para) AJ.para=datos.para;
+      guardaAj();
+      try{ await enviarVisita(v,as,datos); }catch(e){ alert('No se pudo preparar el correo:\n\n'+((e&&e.message)||e)); return; }
+      v.enviada=true; v.enviadaEl=new Date().toISOString(); await guarda('visitas',v);
+      cierra();
+      if(confirm('¿Has enviado el correo desde Gmail?\n\nSí = se marca como enviada y se borrará sola en 7 días.\nNo = se queda aquí para que lo intentes otra vez.')){
+        v.enviada=true; v.enviadaEl=new Date().toISOString(); await guarda('visitas',v);
+      } else { v.enviada=false; v.enviadaEl=null; await guarda('visitas',v); }
+      ruta();
+    };
+  });
+}
+
+const blobABase64=b=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(b);});
+
+async function enviarVisita(v,as,datos){
+  const cuerpo=`Asunto: ${datos.obra} — ${datos.fecha}\n\n`+as.map((a,i)=>`${pad(i+1)} — ${a.texto||'(sin comentario)'}`).join('\n');
+  const Share=capPlugin('Share'), FS=capPlugin('Filesystem');
+  const files=[];
+  if(Share&&FS){
+    for(let i=0;i<as.length;i++){
+      const a=as[i]; if(!a.fotoId) continue;
+      const f=await uno('fotos',a.fotoId); if(!f||!f.blob) continue;
+      const nombre=`${pad(i+1)}_${slug(a.texto||'foto')}.jpg`;
+      const b64=await blobABase64(f.blob);
+      const w=await FS.writeFile({path:'enviar/'+nombre,data:b64,directory:'CACHE',recursive:true});
+      files.push(w.uri);
+    }
+    await Share.share({title:datos.asunto,text:cuerpo,files,dialogTitle:'Enviar la visita'});
+    return;
+  }
+  // Navegador (Chrome en Android): compartir con las fotos adjuntas.
+  // Sale la hoja de Android -> Gmail, con las fotos como adjuntos en orden.
+  const arch=[];
+  for(let i=0;i<as.length;i++){
+    const a=as[i]; if(!a.fotoId) continue;
+    const f=await uno('fotos',a.fotoId); if(!f||!f.blob) continue;
+    arch.push(new File([f.blob],pad(i+1)+'_'+slug(a.texto||'foto')+'.jpg',{type:'image/jpeg'}));
+  }
+  if(arch.length && navigator.canShare && navigator.canShare({files:arch})){
+    await navigator.share({files:arch,text:cuerpo,title:datos.asunto});
+    return;
+  }
+  // Respaldo: correo sin adjuntos, con el texto
+  location.href='mailto:'+encodeURIComponent(datos.para)+'?subject='+encodeURIComponent(datos.asunto)+'&body='+encodeURIComponent(cuerpo);
+}
+
+/* ============ ajustes ============ */
+function ajustesDialog(){
+  dialogo(`<h2>Ajustes</h2>
+    <label>Destinatario habitual</label>
+    <input id="a_para" type="email" value="${esc(AJ.para)}">
+    <label>Obras sugeridas (una por línea)</label>
+    <textarea id="a_obras" rows="6">${esc(AJ.obras.join('\n'))}</textarea>
+    <p class="hint">Se irán añadiendo solas las que uses. Aquí puedes corregirlas o borrar las que ya no quieras.</p>
+    <div class="fila"><button class="btn" data-x>Cerrar</button><button class="btn primary" id="a_ok">Guardar</button></div>`,
+  m=>{
+    m.querySelector('#a_ok').onclick=()=>{
+      AJ.para=m.querySelector('#a_para').value.trim();
+      AJ.obras=[...new Set(m.querySelector('#a_obras').value.split('\n').map(s=>s.trim()).filter(Boolean))];
+      guardaAj(); cierra();
+    };
+  });
+}
+
+/* ============ utilidades de pantalla ============ */
+const modal=document.getElementById('modal');
+function dialogo(html,alMontar){
+  modal.innerHTML=`<div class="fondo"><div class="caja">${html}</div></div>`;
+  const caja=modal.firstElementChild;
+  caja.onclick=e=>{ if(e.target===caja) cierra(); };
+  modal.classList.add('on');
+  caja.querySelectorAll('[data-x]').forEach(b=>b.onclick=cierra);
+  if(alMontar) alMontar(caja.querySelector('.caja'));
+}
+function cierra(){ modal.classList.remove('on'); modal.innerHTML=''; }
+atras.onclick=()=>ir('#/');
+document.getElementById('cfg').onclick=ajustesDialog;
+window.addEventListener('hashchange',ruta);
+
+/* ============ limpieza de enviadas (7 días) ============ */
+async function limpiarEnviadas(){
+  const limite=Date.now()-7*24*60*60*1000;
+  for(const v of await todos('visitas')){
+    if(!v.enviada||!v.enviadaEl) continue;
+    if(Date.parse(v.enviadaEl)<limite){
+      for(const a of (await todos('apuntes')).filter(a=>a.visitaId===v.id)){ if(a.fotoId) await borra('fotos',a.fotoId); await borra('apuntes',a.id); }
+      await borra('visitas',v.id);
+    }
+  }
+}
+
+/* ============ arranque ============ */
+(async()=>{
+  try{ await limpiarEnviadas(); }catch(_){}
+  await cargar();
+  ruta();
+})();
+</script>
+</body>
+</html>
