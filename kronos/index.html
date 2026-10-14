@@ -73,7 +73,7 @@ h2{font-size:1.05rem;margin:0 0 4px}
 <div id="zoom"><img id="zi" alt=""><button class="x" id="zx">&#10005;</button><div class="pie" id="zp"></div></div>
 <script src="capacitor.js"></script>
 <script>
-const VER='v10';   // cámbialo en cada publicación para saber qué versión tienes
+const VER='v11';   // cámbialo en cada publicación para saber qué versión tienes
 
 /* ============ almacén local ============ */
 const DB='kronos-db';
@@ -499,6 +499,68 @@ function ajustesDialog(){
   });
 }
 
+/* ============ fotos compartidas desde otras apps ============ */
+// Cuando compartes fotos (WhatsApp, capturas, Fotos…) Kronos se abre aquí y te
+// pregunta a qué visita van. Nunca a una ya enviada: solo en curso o una nueva.
+async function recibirCompartidas(){
+  const q=new URLSearchParams(location.search).get('compartir');
+  if(!q) return;
+  history.replaceState(null,'',location.pathname);
+  if(q==='error'){ alert('No se pudieron recibir las fotos.'); return; }
+  let items=[];
+  try{ items=JSON.parse(q); }catch(_){ return; }
+  const cache=await caches.open('kronos-compartir');
+  const ficheros=[];
+  for(const it of items){
+    const r=await cache.match('/__compartida__/'+it.id);
+    if(r){ const b=await r.blob(); ficheros.push(new File([b],it.nombre||'foto.jpg',{type:b.type||'image/jpeg'})); }
+    try{ await cache.delete('/__compartida__/'+it.id); }catch(_){}
+  }
+  if(!ficheros.length){ alert('No se pudieron recibir las fotos.'); return; }
+  elegirVisitaParaCompartir(ficheros);
+}
+
+function elegirVisitaParaCompartir(ficheros){
+  const abiertas=visitas.filter(v=>!v.enviada).sort((a,b)=>(b.creada||'').localeCompare(a.creada||''));
+  const n=ficheros.length;
+  dialogo(`<h2>${n} foto${n===1?'':'s'} recibida${n===1?'':'s'}</h2>
+    <p class="hint">¿A qué visita las añado? Las enviadas no aparecen.</p>
+    ${abiertas.map(v=>`<button class="btn grande" data-v="${v.id}" style="width:100%;margin-bottom:8px">${esc(v.obra||'(sin nombre)')} · ${esc(v.fecha||'')}</button>`).join('')||'<p class="hint">No hay ninguna visita en curso.</p>'}
+    <button class="btn primary grande" id="sh_nueva">+ Visita nueva con estas fotos</button>
+    <div class="fila"><button class="btn" data-x>Cancelar</button></div>`,
+  m=>{
+    m.querySelectorAll('[data-v]').forEach(b=>b.onclick=async()=>{
+      const v=visitas.find(x=>x.id===b.dataset.v);
+      if(!v) return;
+      cierra();
+      await anadirCompartidasA(v,ficheros);
+      ir('#/v/'+v.id);
+    });
+    m.querySelector('#sh_nueva').onclick=async()=>{
+      const obra=prompt('Nombre de la obra:');
+      if(!obra||!obra.trim()) return;
+      const v={id:uid(),obra:obra.trim(),fecha:hoy(),creada:new Date().toISOString(),enviada:false};
+      await guarda('visitas',v);
+      if(!AJ.obras.includes(v.obra)){ AJ.obras.unshift(v.obra); guardaAj(); }
+      cierra();
+      await anadirCompartidasA(v,ficheros);
+      ir('#/v/'+v.id);
+    };
+  });
+}
+
+async function anadirCompartidasA(v,ficheros){
+  let ord=siguienteOrden(v);
+  for(const f of ficheros){
+    let blob=f;
+    try{ blob=await comprimir(f,1600,0.78); }catch(_){}
+    const fotoId=uid();
+    await guarda('fotos',{id:fotoId,blob,creada:new Date().toISOString()});
+    await guarda('apuntes',{id:uid(),visitaId:v.id,orden:ord++,tipo:'foto',texto:'',fotos:[fotoId]});
+  }
+  await ruta();
+}
+
 /* ============ utilidades de pantalla ============ */
 const modal=document.getElementById('modal');
 function dialogo(html,alMontar){
@@ -529,6 +591,8 @@ async function limpiarEnviadas(){
 /* ============ arranque ============ */
 (async()=>{
   document.getElementById('ver').textContent=VER;
+  if('serviceWorker' in navigator){ try{ await navigator.serviceWorker.register('sw.js'); }catch(_){} }
+  await recibirCompartidas();
   try{ await limpiarEnviadas(); }catch(_){}
   await cargar();
   ruta();
