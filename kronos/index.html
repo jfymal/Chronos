@@ -66,7 +66,7 @@ h2{font-size:1.05rem;margin:0 0 4px}
 <div id="zoom"><img id="zi" alt=""><button class="x" id="zx">&#10005;</button><div class="pie" id="zp"></div></div>
 <script src="capacitor.js"></script>
 <script>
-const VER='v4';   // cámbialo en cada publicación para saber qué versión tienes
+const VER='v5';   // cámbialo en cada publicación para saber qué versión tienes
 
 /* ============ almacén local ============ */
 const DB='kronos-db';
@@ -103,6 +103,9 @@ function esNativo(){
   const C=window.capacitorExports;
   return !!(C && C.Capacitor && C.Capacitor.isNativePlatform && C.Capacitor.isNativePlatform());
 }
+
+/* Lista de fotos de un apunte (los antiguos tenían una sola: fotoId) */
+function fotosDe(a){ if(!a) return []; if(a.fotos&&a.fotos.length) return a.fotos; return a.fotoId?[a.fotoId]:[]; }
 
 /* ============ fotos ============ */
 const blobUrl=(b)=>URL.createObjectURL(b);
@@ -205,7 +208,7 @@ function pintarInicio(){
 }
 function tarjetaVisita(v){
   const n=apuntesDe(v.id).length;
-  const fotos=apuntesDe(v.id).filter(a=>a.fotoId).length;
+  const fotos=apuntesDe(v.id).reduce((n,a)=>n+fotosDe(a).length,0);
   return `<div class="card" data-abrir="${v.id}" style="cursor:pointer">
     <div class="vtop"><b>${esc(v.obra||'(sin nombre)')}</b><span>${esc(v.fecha||'')}</span></div>
     <div class="hint">${n} apunte${n===1?'':'s'} · ${fotos} foto${fotos===1?'':'s'}${v.enviada?' · <b>enviada ✓</b>':''}</div>
@@ -241,13 +244,14 @@ async function pintarVisita(v){
   for(let i=0;i<as.length;i++){
     const a=as[i];
     let foto='';
-    if(a.fotoId){const f=await uno('fotos',a.fotoId); if(f&&f.blob) foto=`<img src="${blobUrl(f.blob)}" data-ver="${a.id}" alt="">`;}
+    const ids=fotosDe(a);
+    for(let k=0;k<ids.length;k++){const f=await uno('fotos',ids[k]); if(f&&f.blob) foto+=`<img src="${blobUrl(f.blob)}" data-ver="${a.id}" data-k="${k}" alt="">`;}
     h+=`<div class="apunte"><div class="num">${pad(i+1)}</div><div style="flex:1;min-width:0">
       ${foto}
       ${a.texto?`<div class="texto">${esc(a.texto)}</div>`:'<div class="hint">(sin comentario)</div>'}
       <div class="acciones">
         <button class="btnmini" data-com="${a.id}">${a.texto?'editar comentario':'poner comentario'}</button>
-        ${a.fotoId?'':`<button class="btnmini" data-foto="${a.id}">añadir foto</button>`}
+        <button class="btnmini" data-foto="${a.id}">${ids.length?'añadir otra foto':'añadir foto'}</button>
         <button class="btnmini" data-del="${a.id}">borrar</button>
       </div></div></div>`;
   }
@@ -263,7 +267,7 @@ async function pintarVisita(v){
   document.getElementById('btexto').onclick=()=>anadirTexto(v,null);
   const en=document.getElementById('enviar'); if(en) en.onclick=()=>pantallaEnviar(v);
   const bv=document.getElementById('borrarvisita'); if(bv) bv.onclick=()=>borrarVisita(v);
-  vista.querySelectorAll('[data-ver]').forEach(el=>el.onclick=async()=>verFoto(el.dataset.ver));
+  vista.querySelectorAll('[data-ver]').forEach(el=>el.onclick=async()=>verFoto(el.dataset.ver,Number(el.dataset.k||0)));
   vista.querySelectorAll('[data-com]').forEach(b=>b.onclick=()=>anadirTexto(v,b.dataset.com));
   vista.querySelectorAll('[data-foto]').forEach(b=>b.onclick=()=>anadirFoto(v,b.dataset.foto));
   vista.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>borrarApunte(b.dataset.del,v));
@@ -282,9 +286,9 @@ async function anadirFoto(v,apunteId){
     await guarda('fotos',{id:fotoId,blob,creada:new Date().toISOString()});
     if(apunteId){
       const a=apuntes.find(x=>x.id===apunteId);
-      if(a){ a.fotoId=fotoId; await guarda('apuntes',a); }
+      if(a){ a.fotos=fotosDe(a).concat([fotoId]); delete a.fotoId; await guarda('apuntes',a); }
     } else {
-      await guarda('apuntes',{id:uid(),visitaId:v.id,orden:siguienteOrden(v),tipo:'foto',texto:'',fotoId});
+      await guarda('apuntes',{id:uid(),visitaId:v.id,orden:siguienteOrden(v),tipo:'foto',texto:'',fotos:[fotoId]});
     }
     ruta();
   }catch(e){ alert('No se pudo guardar la foto:\n\n'+((e&&e.message)||e)); }
@@ -299,8 +303,8 @@ async function anadirTexto(v,apunteId){
   m=>{
     m.querySelector('#c_ok').onclick=async()=>{
       const t=m.querySelector('#c_t').value.trim();
-      if(a){ if(!t && !a.fotoId){ await borrar('apuntes',a.id); } else { a.texto=t; await guarda('apuntes',a); } }
-      else { if(!t){ return; } await guarda('apuntes',{id:uid(),visitaId:v.id,orden:siguienteOrden(v),tipo:'texto',texto:t,fotoId:null}); }
+      if(a){ if(!t && !fotosDe(a).length){ await borrar('apuntes',a.id); } else { a.texto=t; await guarda('apuntes',a); } }
+      else { if(!t){ return; } await guarda('apuntes',{id:uid(),visitaId:v.id,orden:siguienteOrden(v),tipo:'texto',texto:t,fotos:[]}); }
       cierra(); ruta();
     };
     setTimeout(()=>m.querySelector('#c_t').focus(),60);
@@ -311,13 +315,13 @@ async function borrarApunte(id,v){
   const a=apuntes.find(x=>x.id===id);
   if(!a) return;
   if(!confirm('¿Borrar este apunte?')) return;
-  if(a.fotoId) await borra('fotos',a.fotoId);
+  for(const f of fotosDe(a)) await borra('fotos',f);
   await borra('apuntes',id);
   ruta();
 }
 async function borrarVisita(v){
   if(!confirm('¿Borrar la visita y sus fotos?\n\nNo se puede deshacer.')) return;
-  for(const a of apuntesDe(v.id)){ if(a.fotoId) await borra('fotos',a.fotoId); await borra('apuntes',a.id); }
+  for(const a of apuntesDe(v.id)){ for(const f of fotosDe(a)) await borra('fotos',f); await borra('apuntes',a.id); }
   await borra('visitas',v.id);
   ir('#/');
 }
@@ -347,7 +351,7 @@ document.getElementById('zx').onclick=cerrarZoom;
 function cerrarZoom(){ zoom.classList.remove('on'); zi.removeAttribute('src'); reinicia(); }
 async function verFoto(apunteId){
   const a=apuntes.find(x=>x.id===apunteId);
-  const f=a&&a.fotoId?await uno('fotos',a.fotoId):null;
+  const ids=fotosDe(a); const f=ids.length?await uno('fotos',ids[k||0]):null;
   if(!f||!f.blob) return;
   zi.src=blobUrl(f.blob); zp.textContent=a.texto||''; zp.style.display=a.texto?'block':'none';
   reinicia(); zoom.classList.add('on');
@@ -400,6 +404,21 @@ async function pantallaEnviar(v){
   });
 }
 
+// Fotos de la visita con su nombre definitivo: 01a_, 01b_… si un apunte lleva
+// varias, para que el orden se entienda en el correo aunque el cliente las reordene.
+async function archivosDeVisita(as){
+  const out=[];
+  for(let i=0;i<as.length;i++){
+    const a=as[i], ids=fotosDe(a);
+    for(let k=0;k<ids.length;k++){
+      const f=await uno('fotos',ids[k]); if(!f||!f.blob) continue;
+      const letra=ids.length>1?String.fromCharCode(97+k):'';
+      out.push({nombre:pad(i+1)+letra+'_'+slug(a.texto||'foto')+'.jpg',blob:f.blob});
+    }
+  }
+  return out;
+}
+
 const blobABase64=b=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(b);});
 
 async function enviarVisita(v,as,datos){
@@ -407,12 +426,9 @@ async function enviarVisita(v,as,datos){
   const Share=capPlugin('Share'), FS=capPlugin('Filesystem');
   const files=[];
   if(esNativo()&&Share&&FS){
-    for(let i=0;i<as.length;i++){
-      const a=as[i]; if(!a.fotoId) continue;
-      const f=await uno('fotos',a.fotoId); if(!f||!f.blob) continue;
-      const nombre=`${pad(i+1)}_${slug(a.texto||'foto')}.jpg`;
-      const b64=await blobABase64(f.blob);
-      const w=await FS.writeFile({path:'enviar/'+nombre,data:b64,directory:'CACHE',recursive:true});
+    for(const x of await archivosDeVisita(as)){
+      const b64=await blobABase64(x.blob);
+      const w=await FS.writeFile({path:'enviar/'+x.nombre,data:b64,directory:'CACHE',recursive:true});
       files.push(w.uri);
     }
     await Share.share({title:datos.asunto,text:cuerpo,files,dialogTitle:'Enviar la visita'});
@@ -421,11 +437,7 @@ async function enviarVisita(v,as,datos){
   // Navegador (Chrome en Android): compartir con las fotos adjuntas.
   // Sale la hoja de Android -> Gmail, con las fotos como adjuntos en orden.
   const arch=[];
-  for(let i=0;i<as.length;i++){
-    const a=as[i]; if(!a.fotoId) continue;
-    const f=await uno('fotos',a.fotoId); if(!f||!f.blob) continue;
-    arch.push(new File([f.blob],pad(i+1)+'_'+slug(a.texto||'foto')+'.jpg',{type:'image/jpeg'}));
-  }
+  for(const x of await archivosDeVisita(as)) arch.push(new File([x.blob],x.nombre,{type:'image/jpeg'}));
   if(arch.length && navigator.canShare && navigator.canShare({files:arch})){
     await navigator.share({files:arch,text:cuerpo,title:datos.asunto});
     return;
@@ -482,7 +494,7 @@ async function limpiarEnviadas(){
   for(const v of await todos('visitas')){
     if(!v.enviada||!v.enviadaEl) continue;
     if(Date.parse(v.enviadaEl)<limite){
-      for(const a of (await todos('apuntes')).filter(a=>a.visitaId===v.id)){ if(a.fotoId) await borra('fotos',a.fotoId); await borra('apuntes',a.id); }
+      for(const a of (await todos('apuntes')).filter(a=>a.visitaId===v.id)){ for(const f of fotosDe(a)) await borra('fotos',f); await borra('apuntes',a.id); }
       await borra('visitas',v.id);
     }
   }
