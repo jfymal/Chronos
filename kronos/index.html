@@ -73,7 +73,7 @@ h2{font-size:1.05rem;margin:0 0 4px}
 <div id="zoom"><img id="zi" alt=""><button class="x" id="zx">&#10005;</button><div class="pie" id="zp"></div></div>
 <script src="capacitor.js"></script>
 <script>
-const VER='v9';   // cámbialo en cada publicación para saber qué versión tienes
+const VER='v10';   // cámbialo en cada publicación para saber qué versión tienes
 
 /* ============ almacén local ============ */
 const DB='kronos-db';
@@ -403,11 +403,10 @@ async function pantallaEnviar(v){
       if(datos.para) AJ.para=datos.para;
       guardaAj();
       try{ await enviarVisita(v,as,datos); }catch(e){ alert('No se pudo preparar el correo:\n\n'+((e&&e.message)||e)); return; }
+      // Se marca como enviada directamente: ya se ha abierto Gmail con todo puesto.
+      // Si al final no lo envías, en la visita está "Marcar como NO enviada".
       v.enviada=true; v.enviadaEl=new Date().toISOString(); await guarda('visitas',v);
       cierra();
-      if(confirm('¿Has enviado el correo desde Gmail?\n\nSí = se marca como enviada y se borrará sola en 7 días.\nNo = se queda aquí para que lo intentes otra vez.')){
-        v.enviada=true; v.enviadaEl=new Date().toISOString(); await guarda('visitas',v);
-      } else { v.enviada=false; v.enviadaEl=null; await guarda('visitas',v); }
       ruta();
     };
   });
