@@ -22,6 +22,7 @@ main{padding:12px;display:flex;flex-direction:column;gap:10px}
 .btnfoto{display:block;width:100%;margin:8px 0 4px;padding:12px 14px;border:0;border-radius:10px;
   cursor:pointer;background:var(--accent);color:#fff;font-size:.95rem;font-weight:600;text-align:center}
 .btnfoto:hover{filter:brightness(1.08)}
+.btnfoto.gal{background:var(--card2);color:var(--text);border:1px solid var(--line);font-weight:500}
 /* Enviar: color propio para no confundirlo con el de añadir foto */
 .btn.enviar{background:#1f9d55;border-color:#1f9d55;color:#fff;font-weight:700}
 .btn.enviar:hover{filter:brightness(1.08)}
@@ -73,7 +74,7 @@ h2{font-size:1.05rem;margin:0 0 4px}
 <div id="zoom"><img id="zi" alt=""><button class="x" id="zx">&#10005;</button><div class="pie" id="zp"></div></div>
 <script src="capacitor.js"></script>
 <script>
-const VER='v12';   // cámbialo en cada publicación para saber qué versión tienes
+const VER='v13';   // cámbialo en cada publicación para saber qué versión tienes
 
 /* ============ almacén local ============ */
 const DB='kronos-db';
@@ -257,6 +258,7 @@ async function pintarVisita(v){
       ${a.texto?`<div class="texto">${esc(a.texto)}</div>`:'<div class="hint">(sin comentario)</div>'}
       ${foto}
       <button class="btnfoto" data-foto="${a.id}">📷 ${ids.length?'Añadir otra foto':'Añadir foto'}</button>
+      <button class="btnfoto gal" data-gal="${a.id}">🖼️ Añadir desde la galería</button>
       <div class="acciones">
         <button class="btnmini" data-com="${a.id}">${a.texto?'editar comentario':'poner comentario'}</button>
         <button class="btnmini" data-del="${a.id}">borrar</button>
@@ -287,12 +289,13 @@ async function pintarVisita(v){
   vista.querySelectorAll('[data-ver]').forEach(el=>el.onclick=async()=>verFoto(el.dataset.ver,Number(el.dataset.k||0)));
   vista.querySelectorAll('[data-com]').forEach(b=>b.onclick=()=>anadirTexto(v,b.dataset.com));
   vista.querySelectorAll('[data-foto]').forEach(b=>b.onclick=()=>anadirFoto(v,b.dataset.foto));
+  vista.querySelectorAll('[data-gal]').forEach(b=>b.onclick=()=>elegirGaleria(v,b.dataset.gal));
   vista.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>borrarApunte(b.dataset.del,v));
 }
 
 const siguienteOrden=v=>{const as=apuntesDe(v.id);return as.length?(as[as.length-1].orden||0)+1:1;};
 
-async function elegirGaleria(v){
+async function elegirGaleria(v,apunteId){
   const inp=document.createElement('input');
   inp.type='file';
   inp.setAttribute('accept','image/*');
@@ -302,7 +305,7 @@ async function elegirGaleria(v){
   inp.onchange=async()=>{
     const fs=[...inp.files];
     inp.remove();
-    if(fs.length) await anadirDeArchivos(v,fs,null);
+    if(fs.length) await anadirDeArchivos(v,fs,apunteId||null);
   };
   inp.click();
 }
