@@ -22,6 +22,9 @@ main{padding:12px;display:flex;flex-direction:column;gap:10px}
 .btnfoto{display:block;width:100%;margin:8px 0 4px;padding:12px 14px;border:0;border-radius:10px;
   cursor:pointer;background:var(--accent);color:#fff;font-size:.95rem;font-weight:600;text-align:center}
 .btnfoto:hover{filter:brightness(1.08)}
+/* Enviar: color propio para no confundirlo con el de añadir foto */
+.btn.enviar{background:#1f9d55;border-color:#1f9d55;color:#fff;font-weight:700}
+.btn.enviar:hover{filter:brightness(1.08)}
 .btnmini{border:0;background:none;color:var(--muted);text-decoration:underline;font-size:.82rem;padding:2px 6px;cursor:pointer}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
 .vtop{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
@@ -29,7 +32,7 @@ main{padding:12px;display:flex;flex-direction:column;gap:10px}
 .vtop span{color:var(--muted);font-size:.85rem}
 .apunte{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:flex;gap:10px}
 .num{color:var(--muted);font-variant-numeric:tabular-nums;font-weight:600;min-width:26px}
-.apunte img{width:100%;max-width:220px;border-radius:9px;background:#000;cursor:zoom-in;display:block;margin-bottom:6px}
+.apunte img{width:100%;max-width:220px;border-radius:9px;background:#000;cursor:zoom-in;display:block;margin:12px 0 6px}
 .texto{white-space:pre-wrap;word-wrap:break-word}
 .acciones{display:flex;flex-wrap:wrap;gap:2px;margin-top:6px}
 input,textarea,select{width:100%;background:var(--card2);border:1px solid var(--line);color:var(--text);border-radius:9px;padding:11px;font-size:.95rem;font-family:inherit}
@@ -70,7 +73,7 @@ h2{font-size:1.05rem;margin:0 0 4px}
 <div id="zoom"><img id="zi" alt=""><button class="x" id="zx">&#10005;</button><div class="pie" id="zp"></div></div>
 <script src="capacitor.js"></script>
 <script>
-const VER='v7';   // cámbialo en cada publicación para saber qué versión tienes
+const VER='v8';   // cámbialo en cada publicación para saber qué versión tienes
 
 /* ============ almacén local ============ */
 const DB='kronos-db';
@@ -263,7 +266,7 @@ async function pintarVisita(v){
       <button class="btn primary" style="flex:1" id="bfoto">📷 Hacer foto</button>
       <button class="btn" style="flex:1" id="btexto">💬 Comentario</button></div>`;
   h+=`<div style="height:6px"></div>`;
-  if(as.length) h+=`<button class="btn primary grande" id="enviar">✉️ Enviar visita</button>`;
+  if(as.length) h+=`<button class="btn enviar grande" id="enviar">✉️ Enviar visita</button>`;
   if(v.enviada) h+=`<button class="btn danger grande" id="borrarvisita">Borrar esta visita</button>`;
   vista.innerHTML=h;
 
