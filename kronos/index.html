@@ -66,7 +66,7 @@ h2{font-size:1.05rem;margin:0 0 4px}
 <div id="zoom"><img id="zi" alt=""><button class="x" id="zx">&#10005;</button><div class="pie" id="zp"></div></div>
 <script src="capacitor.js"></script>
 <script>
-const VER='v3';   // cámbialo en cada publicación para saber qué versión tienes
+const VER='v4';   // cámbialo en cada publicación para saber qué versión tienes
 
 /* ============ almacén local ============ */
 const DB='kronos-db';
@@ -96,6 +96,13 @@ const guardaAj=()=>{try{localStorage.setItem('kronos-aj',JSON.stringify(AJ));}ca
 
 /* ============ Capacitor ============ */
 function capPlugin(n){const C=window.capacitorExports;if(!C||!C.registerPlugin)return null;try{return C.registerPlugin(n);}catch(_){return null;}}
+// OJO: en el navegador Capacitor está cargado pero sus plugins NO funcionan.
+// Sin esta comprobación, llamar a la cámara nativa da error y no se llega nunca
+// al respaldo (la cámara del móvil por el selector de Android).
+function esNativo(){
+  const C=window.capacitorExports;
+  return !!(C && C.Capacitor && C.Capacitor.isNativePlatform && C.Capacitor.isNativePlatform());
+}
 
 /* ============ fotos ============ */
 const blobUrl=(b)=>URL.createObjectURL(b);
@@ -141,7 +148,7 @@ async function hacerFoto(){
     try{ const f=await camaraEnVivo(); if(f) return f; }catch(_){}
   }
   // Cámara NATIVA del móvil (la aplicación de cámara del sistema).
-  const Cam=capPlugin('Camera');
+  const Cam=esNativo()?capPlugin('Camera'):null;
   if(Cam&&Cam.getPhoto){
     const f=await Cam.getPhoto({quality:85,allowEditing:false,resultType:'uri',source:'CAMERA',saveToGallery:false,width:1600,correctOrientation:true});
     if(!f||!f.webPath)return null;
@@ -399,7 +406,7 @@ async function enviarVisita(v,as,datos){
   const cuerpo=`Asunto: ${datos.obra} — ${datos.fecha}\n\n`+as.map((a,i)=>`${pad(i+1)} — ${a.texto||'(sin comentario)'}`).join('\n');
   const Share=capPlugin('Share'), FS=capPlugin('Filesystem');
   const files=[];
-  if(Share&&FS){
+  if(esNativo()&&Share&&FS){
     for(let i=0;i<as.length;i++){
       const a=as[i]; if(!a.fotoId) continue;
       const f=await uno('fotos',a.fotoId); if(!f||!f.blob) continue;
