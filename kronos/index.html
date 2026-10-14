@@ -73,7 +73,7 @@ h2{font-size:1.05rem;margin:0 0 4px}
 <div id="zoom"><img id="zi" alt=""><button class="x" id="zx">&#10005;</button><div class="pie" id="zp"></div></div>
 <script src="capacitor.js"></script>
 <script>
-const VER='v8';   // cámbialo en cada publicación para saber qué versión tienes
+const VER='v9';   // cámbialo en cada publicación para saber qué versión tienes
 
 /* ============ almacén local ============ */
 const DB='kronos-db';
@@ -267,6 +267,7 @@ async function pintarVisita(v){
       <button class="btn" style="flex:1" id="btexto">💬 Comentario</button></div>`;
   h+=`<div style="height:6px"></div>`;
   if(as.length) h+=`<button class="btn enviar grande" id="enviar">✉️ Enviar visita</button>`;
+  h+=`<button class="btn grande" id="marcar">${v.enviada?'↩ Marcar como NO enviada':'✓ Marcar como enviada'}</button>`;
   if(v.enviada) h+=`<button class="btn danger grande" id="borrarvisita">Borrar esta visita</button>`;
   vista.innerHTML=h;
 
@@ -274,6 +275,13 @@ async function pintarVisita(v){
   document.getElementById('btexto').onclick=()=>anadirTexto(v,null);
   const en=document.getElementById('enviar'); if(en) en.onclick=()=>pantallaEnviar(v);
   const bv=document.getElementById('borrarvisita'); if(bv) bv.onclick=()=>borrarVisita(v);
+  const bm=document.getElementById('marcar');
+  if(bm) bm.onclick=async()=>{
+    v.enviada=!v.enviada;
+    v.enviadaEl=v.enviada?new Date().toISOString():null;
+    await guarda('visitas',v);
+    ruta();
+  };
   vista.querySelectorAll('[data-ver]').forEach(el=>el.onclick=async()=>verFoto(el.dataset.ver,Number(el.dataset.k||0)));
   vista.querySelectorAll('[data-com]').forEach(b=>b.onclick=()=>anadirTexto(v,b.dataset.com));
   vista.querySelectorAll('[data-foto]').forEach(b=>b.onclick=()=>anadirFoto(v,b.dataset.foto));
@@ -326,11 +334,11 @@ async function borrarApunte(id,v){
   await borra('apuntes',id);
   ruta();
 }
-async function borrarVisita(v){
-  if(!confirm('¿Borrar la visita y sus fotos?\n\nNo se puede deshacer.')) return;
+async function borrarVisita(v,silencioso){
+  if(!silencioso && !confirm('¿Borrar la visita y sus fotos?\n\nNo se puede deshacer.')) return;
   for(const a of apuntesDe(v.id)){ for(const f of fotosDe(a)) await borra('fotos',f); await borra('apuntes',a.id); }
   await borra('visitas',v.id);
-  ir('#/');
+  if(!silencioso) ir('#/');
 }
 
 /* ============ visor con zoom ============ */
@@ -471,8 +479,17 @@ function ajustesDialog(){
     <p class="hint">Se irán añadiendo solas las que uses. Aquí puedes corregirlas o borrar las que ya no quieras.</p>
     <button class="btn" id="a_upd" style="width:100%;margin-top:12px">Buscar actualizaciones</button>
     <p class="hint">Si algo no te cuadra con lo último que te conté, pulsa aquí: recarga la app saltándose la caché del navegador.</p>
+    <button class="btn danger" id="a_purga" style="width:100%;margin-top:12px">Borrar todas las enviadas</button>
     <div class="fila"><button class="btn" data-x>Cerrar</button><button class="btn primary" id="a_ok">Guardar</button></div>`,
   m=>{
+    m.querySelector('#a_purga').onclick=async()=>{
+      const env=visitas.filter(x=>x.enviada);
+      if(!env.length){ alert('No hay ninguna visita marcada como enviada.'); return; }
+      if(!confirm('¿Borrar '+env.length+' visita'+(env.length===1?'':'s')+' enviada'+(env.length===1?'':'s')+' y sus fotos?\n\nNo se puede deshacer.')) return;
+      for(const x of env) await borrarVisita(x,true);
+      cierra();
+      await ruta();
+    };
     m.querySelector('#a_upd').onclick=()=>{ location.replace(location.pathname+'?v='+Date.now()); };
     m.querySelector('#a_ok').onclick=()=>{
       AJ.para=m.querySelector('#a_para').value.trim();
