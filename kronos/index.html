@@ -18,6 +18,10 @@ main{padding:12px;display:flex;flex-direction:column;gap:10px}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
 .btn.danger{color:var(--danger)}
 .btn.grande{width:100%;padding:14px;font-size:1rem}
+/* Botón destacado para añadir fotos a un comentario */
+.btnfoto{display:block;width:100%;margin:8px 0 4px;padding:12px 14px;border:0;border-radius:10px;
+  cursor:pointer;background:var(--accent);color:#fff;font-size:.95rem;font-weight:600;text-align:center}
+.btnfoto:hover{filter:brightness(1.08)}
 .btnmini{border:0;background:none;color:var(--muted);text-decoration:underline;font-size:.82rem;padding:2px 6px;cursor:pointer}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
 .vtop{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
@@ -66,7 +70,7 @@ h2{font-size:1.05rem;margin:0 0 4px}
 <div id="zoom"><img id="zi" alt=""><button class="x" id="zx">&#10005;</button><div class="pie" id="zp"></div></div>
 <script src="capacitor.js"></script>
 <script>
-const VER='v6';   // cámbialo en cada publicación para saber qué versión tienes
+const VER='v7';   // cámbialo en cada publicación para saber qué versión tienes
 
 /* ============ almacén local ============ */
 const DB='kronos-db';
@@ -247,11 +251,11 @@ async function pintarVisita(v){
     const ids=fotosDe(a);
     for(let k=0;k<ids.length;k++){const f=await uno('fotos',ids[k]); if(f&&f.blob) foto+=`<img src="${blobUrl(f.blob)}" data-ver="${a.id}" data-k="${k}" alt="">`;}
     h+=`<div class="apunte"><div class="num">${pad(i+1)}</div><div style="flex:1;min-width:0">
-      ${foto}
       ${a.texto?`<div class="texto">${esc(a.texto)}</div>`:'<div class="hint">(sin comentario)</div>'}
+      ${foto}
+      <button class="btnfoto" data-foto="${a.id}">📷 ${ids.length?'Añadir otra foto':'Añadir foto'}</button>
       <div class="acciones">
         <button class="btnmini" data-com="${a.id}">${a.texto?'editar comentario':'poner comentario'}</button>
-        <button class="btnmini" data-foto="${a.id}">${ids.length?'añadir otra foto':'añadir foto'}</button>
         <button class="btnmini" data-del="${a.id}">borrar</button>
       </div></div></div>`;
   }
@@ -374,17 +378,11 @@ async function pantallaEnviar(v){
     <label>Esto es lo que se enviará</label>
     <div class="prev" id="e_prev"></div>
     <p class="hint">Las fotos van adjuntas como <b>01_…, 02_…</b> y en el mismo orden que aquí.</p>
-    <button class="btn" id="e_copiar" style="width:100%;margin-top:10px">Copiar asunto</button>
     <div class="fila"><button class="btn" data-x>Cancelar</button><button class="btn primary" id="e_ok">Enviar por email</button></div>`,
   m=>{
     const obra=m.querySelector('#e_obra'), fecha=m.querySelector('#e_fecha');
     const pintar=()=>{ m.querySelector('#e_asunto').value = `${obra.value.trim()} — ${fecha.value.trim()}`; };
     obra.oninput=pintar; fecha.oninput=pintar; pintar();
-    m.querySelector('#e_copiar').onclick=()=>{
-      const t=m.querySelector('#e_asunto').value;
-      try{ navigator.clipboard.writeText(t); }catch(_){}
-      alert('Asunto copiado. Pégalo en el campo «Asunto» de Gmail.');
-    };
     m.querySelector('#e_prev').textContent=previa;
     m.querySelector('#e_ok').onclick=async()=>{
       const datos={obra:obra.value.trim(),fecha:fecha.value.trim(),para:m.querySelector('#e_para').value.trim(),asunto:m.querySelector('#e_asunto').value.trim()};
@@ -430,7 +428,7 @@ async function archivosDeVisita(as,fecha){
 const blobABase64=b=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(b);});
 
 async function enviarVisita(v,as,datos){
-  const cuerpo=`Asunto: ${datos.obra} — ${datos.fecha}\n\n`+as.map((a,i)=>`${pad(i+1)} — ${a.texto||'(sin comentario)'}`).join('\n');
+  const cuerpo=`Visita — ${datos.obra} — ${datos.fecha}\n\n`+as.map((a,i)=>`${pad(i+1)} — ${a.texto||'(sin comentario)'}`).join('\n');
   const pre=fechaArchivo(datos.fecha,v.creada);
   const Share=capPlugin('Share'), FS=capPlugin('Filesystem');
   const files=[];
