@@ -73,7 +73,7 @@ h2{font-size:1.05rem;margin:0 0 4px}
 <div id="zoom"><img id="zi" alt=""><button class="x" id="zx">&#10005;</button><div class="pie" id="zp"></div></div>
 <script src="capacitor.js"></script>
 <script>
-const VER='v11';   // cámbialo en cada publicación para saber qué versión tienes
+const VER='v12';   // cámbialo en cada publicación para saber qué versión tienes
 
 /* ============ almacén local ============ */
 const DB='kronos-db';
@@ -264,6 +264,7 @@ async function pintarVisita(v){
   }
   h+=`</div><div class="barra">
       <button class="btn primary" style="flex:1" id="bfoto">📷 Hacer foto</button>
+      <button class="btn" style="flex:1" id="bgal">🖼️ Galería</button>
       <button class="btn" style="flex:1" id="btexto">💬 Comentario</button></div>`;
   h+=`<div style="height:6px"></div>`;
   if(as.length) h+=`<button class="btn enviar grande" id="enviar">✉️ Enviar visita</button>`;
@@ -273,6 +274,7 @@ async function pintarVisita(v){
 
   document.getElementById('bfoto').onclick=()=>anadirFoto(v);
   document.getElementById('btexto').onclick=()=>anadirTexto(v,null);
+  document.getElementById('bgal').onclick=()=>elegirGaleria(v);
   const en=document.getElementById('enviar'); if(en) en.onclick=()=>pantallaEnviar(v);
   const bv=document.getElementById('borrarvisita'); if(bv) bv.onclick=()=>borrarVisita(v);
   const bm=document.getElementById('marcar');
@@ -289,6 +291,41 @@ async function pintarVisita(v){
 }
 
 const siguienteOrden=v=>{const as=apuntesDe(v.id);return as.length?(as[as.length-1].orden||0)+1:1;};
+
+async function elegirGaleria(v){
+  const inp=document.createElement('input');
+  inp.type='file';
+  inp.setAttribute('accept','image/*');
+  inp.setAttribute('multiple','');
+  inp.style.cssText='position:fixed;left:-9999px';
+  document.body.appendChild(inp);
+  inp.onchange=async()=>{
+    const fs=[...inp.files];
+    inp.remove();
+    if(fs.length) await anadirDeArchivos(v,fs,null);
+  };
+  inp.click();
+}
+
+// Guarda una o varias imágenes ya existentes (galería, captura, lo que sea)
+async function anadirDeArchivos(v,ficheros,apunteId){
+  const ids=[];
+  for(const f of ficheros){
+    let blob=f;
+    try{ blob=await comprimir(f,1600,0.78); }catch(_){}
+    const id=uid();
+    await guarda('fotos',{id,blob,creada:new Date().toISOString()});
+    ids.push(id);
+  }
+  if(!ids.length) return;
+  if(apunteId){
+    const a=apuntes.find(x=>x.id===apunteId);
+    if(a){ a.fotos=fotosDe(a).concat(ids); delete a.fotoId; await guarda('apuntes',a); }
+  } else {
+    await guarda('apuntes',{id:uid(),visitaId:v.id,orden:siguienteOrden(v),tipo:'foto',texto:'',fotos:ids});
+  }
+  await ruta();
+}
 
 async function anadirFoto(v,apunteId){
   let file=null;
