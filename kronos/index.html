@@ -66,7 +66,7 @@ h2{font-size:1.05rem;margin:0 0 4px}
 <div id="zoom"><img id="zi" alt=""><button class="x" id="zx">&#10005;</button><div class="pie" id="zp"></div></div>
 <script src="capacitor.js"></script>
 <script>
-const VER='v5';   // cámbialo en cada publicación para saber qué versión tienes
+const VER='v6';   // cámbialo en cada publicación para saber qué versión tienes
 
 /* ============ almacén local ============ */
 const DB='kronos-db';
@@ -406,14 +406,22 @@ async function pantallaEnviar(v){
 
 // Fotos de la visita con su nombre definitivo: 01a_, 01b_… si un apunte lleva
 // varias, para que el orden se entienda en el correo aunque el cliente las reordene.
-async function archivosDeVisita(as){
+// Fecha para el nombre del archivo: al revés (AAAAMMDD). Se toma la fecha de la
+// visita y, si no se puede leer, la de creación.
+function fechaArchivo(txt,iso){
+  const m=String(txt||'').match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+  if(m){ let a=m[3]; if(a.length===2) a='20'+a; return a+String(m[2]).padStart(2,'0')+String(m[1]).padStart(2,'0'); }
+  return String(iso||new Date().toISOString()).slice(0,10).replace(/-/g,'');
+}
+
+async function archivosDeVisita(as,fecha){
   const out=[];
   for(let i=0;i<as.length;i++){
     const a=as[i], ids=fotosDe(a);
     for(let k=0;k<ids.length;k++){
       const f=await uno('fotos',ids[k]); if(!f||!f.blob) continue;
       const letra=ids.length>1?String.fromCharCode(97+k):'';
-      out.push({nombre:pad(i+1)+letra+'_'+slug(a.texto||'foto')+'.jpg',blob:f.blob});
+      out.push({nombre:(fecha?fecha+'_':'')+pad(i+1)+letra+'.jpg',blob:f.blob});
     }
   }
   return out;
@@ -423,10 +431,11 @@ const blobABase64=b=>new Promise((res,rej)=>{const r=new FileReader();r.onload=(
 
 async function enviarVisita(v,as,datos){
   const cuerpo=`Asunto: ${datos.obra} — ${datos.fecha}\n\n`+as.map((a,i)=>`${pad(i+1)} — ${a.texto||'(sin comentario)'}`).join('\n');
+  const pre=fechaArchivo(datos.fecha,v.creada);
   const Share=capPlugin('Share'), FS=capPlugin('Filesystem');
   const files=[];
   if(esNativo()&&Share&&FS){
-    for(const x of await archivosDeVisita(as)){
+    for(const x of await archivosDeVisita(as,pre)){
       const b64=await blobABase64(x.blob);
       const w=await FS.writeFile({path:'enviar/'+x.nombre,data:b64,directory:'CACHE',recursive:true});
       files.push(w.uri);
@@ -437,7 +446,7 @@ async function enviarVisita(v,as,datos){
   // Navegador (Chrome en Android): compartir con las fotos adjuntas.
   // Sale la hoja de Android -> Gmail, con las fotos como adjuntos en orden.
   const arch=[];
-  for(const x of await archivosDeVisita(as)) arch.push(new File([x.blob],x.nombre,{type:'image/jpeg'}));
+  for(const x of await archivosDeVisita(as,pre)) arch.push(new File([x.blob],x.nombre,{type:'image/jpeg'}));
   if(arch.length && navigator.canShare && navigator.canShare({files:arch})){
     await navigator.share({files:arch,text:cuerpo,title:datos.asunto});
     return;
