@@ -42,8 +42,9 @@ h2{font-size:1.05rem;margin:0 0 4px}
 .prev{background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:10px;font-size:.88rem;white-space:pre-wrap;max-height:34vh;overflow:auto}
 .vacio{color:var(--muted);text-align:center;padding:26px 10px}
 #cam{position:fixed;inset:0;z-index:50;background:#000;display:flex;flex-direction:column}
-#cam video{flex:1;width:100%;height:100%;object-fit:contain;background:#000}
-#cam .cb{display:flex;gap:10px;padding:12px;background:var(--bg)}
+#cam video{flex:1 1 auto;min-height:0;width:100%;object-fit:contain;background:#000}
+.cb{display:flex}
+#cam .cb{display:flex;gap:10px;padding:12px;background:var(--bg);flex:0 0 auto}
 /* visor */
 #zoom{position:fixed;inset:0;z-index:40;background:#000;display:none;touch-action:none;overflow:hidden}
 #zoom.on{display:flex;align-items:center;justify-content:center}
@@ -86,7 +87,7 @@ const hoy=()=>new Date().toLocaleDateString('es-ES');
 const slug=s=>String(s||'foto').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9]+/g,'-').replace(/^-+|-+$/g,'').toLowerCase().slice(0,40)||'foto';
 
 /* ============ ajustes (recuerdan lo que usas) ============ */
-const AJ={para:'juanfran.221gestion@gmail.com',obras:['Son Roca','Joan Mestre 20','Arc de Sant Marti 46','Reis Catolics 74']};
+const AJ={para:'juanfran.221gestion@gmail.com',obras:['Son Roca','Joan Mestre 20','Arc de Sant Marti 46','Reis Catolics 74'],camara:'nativa'};
 try{Object.assign(AJ,JSON.parse(localStorage.getItem('kronos-aj')||'{}'));}catch(_){}
 const guardaAj=()=>{try{localStorage.setItem('kronos-aj',JSON.stringify(AJ));}catch(_){}};
 
@@ -131,11 +132,12 @@ async function comprimir(file,max,cal){
   return blob||file;
 }
 async function hacerFoto(){
-  // Cámara DENTRO de la app: funciona en cualquier móvil (incluido el Pixel),
-  // sin depender del selector de Android.
-  if(navigator.mediaDevices && navigator.mediaDevices.getUserMedia){
+  // Cámara integrada en la app: solo si se elige en Ajustes (para móviles donde
+  // la cámara nativa no responde, como el Pixel).
+  if(AJ.camara==='app' && navigator.mediaDevices && navigator.mediaDevices.getUserMedia){
     try{ const f=await camaraEnVivo(); if(f) return f; }catch(_){}
   }
+  // Cámara NATIVA del móvil (la aplicación de cámara del sistema).
   const Cam=capPlugin('Camera');
   if(Cam&&Cam.getPhoto){
     const f=await Cam.getPhoto({quality:85,allowEditing:false,resultType:'uri',source:'CAMERA',saveToGallery:false,width:1600,correctOrientation:true});
@@ -427,6 +429,11 @@ function ajustesDialog(){
   dialogo(`<h2>Ajustes</h2>
     <label>Destinatario habitual</label>
     <input id="a_para" type="email" value="${esc(AJ.para)}">
+    <label>Cámara</label>
+    <select id="a_cam">
+      <option value="nativa"${AJ.camara==='nativa'?' selected':''}>La del móvil (recomendada)</option>
+      <option value="app"${AJ.camara==='app'?' selected':''}>Integrada en la app (si la del móvil falla)</option>
+    </select>
     <label>Obras sugeridas (una por línea)</label>
     <textarea id="a_obras" rows="6">${esc(AJ.obras.join('\n'))}</textarea>
     <p class="hint">Se irán añadiendo solas las que uses. Aquí puedes corregirlas o borrar las que ya no quieras.</p>
@@ -434,6 +441,7 @@ function ajustesDialog(){
   m=>{
     m.querySelector('#a_ok').onclick=()=>{
       AJ.para=m.querySelector('#a_para').value.trim();
+      AJ.camara=m.querySelector('#a_cam').value;
       AJ.obras=[...new Set(m.querySelector('#a_obras').value.split('\n').map(s=>s.trim()).filter(Boolean))];
       guardaAj(); cierra();
     };
