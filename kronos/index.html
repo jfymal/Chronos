@@ -74,7 +74,7 @@ h2{font-size:1.05rem;margin:0 0 4px}
 <div id="zoom"><img id="zi" alt=""><button class="x" id="zx">&#10005;</button><div class="pie" id="zp"></div></div>
 <script src="capacitor.js"></script>
 <script>
-const VER='v14';   // cámbialo en cada publicación para saber qué versión tienes
+const VER='v15';   // cámbialo en cada publicación para saber qué versión tienes
 
 /* ============ almacén local ============ */
 const DB='kronos-db';
@@ -442,9 +442,33 @@ async function pantallaEnviar(v){
       if(!AJ.obras.includes(datos.obra)){AJ.obras.unshift(datos.obra);}
       if(datos.para) AJ.para=datos.para;
       guardaAj();
-      try{ await enviarVisita(v,as,datos); }catch(e){ if(e&&e.name==='AbortError') return; alert('No se pudo preparar el correo:\n\n'+((e&&(e.name?e.name+' — ':'')+(e.message||e))||e)+'\n\nLas fotos siguen guardadas en la visita: puedes intentarlo otra vez.'); return; }
-      // Se marca como enviada directamente: ya se ha abierto Gmail con todo puesto.
-      // Si al final no lo envías, en la visita está "Marcar como NO enviada".
+      const boton=m.querySelector('#e_ok');
+      boton.disabled=true; boton.textContent='Preparando las fotos…';
+      let prep=null;
+      try{ prep=await enviarVisita(v,as,datos); }
+      catch(e){
+        boton.disabled=false; boton.textContent='Enviar por email';
+        if(e&&e.name==='AbortError') return;
+        alert('No se pudo preparar el correo:\n\n'+((e&&(e.name?e.name+' — ':'')+(e.message||e))||e)+'\n\nLas fotos siguen guardadas en la visita: puedes intentarlo otra vez.');
+        return;
+      }
+      if(prep && prep.arch && prep.arch.length){
+        const n=prep.arch.length;
+        boton.outerHTML='<button class="btn enviar grande" id="e_go">✉️ Abrir Gmail con '+n+' foto'+(n===1?'':'s')+'</button>';
+        m.querySelector('#e_go').onclick=async()=>{
+          m.querySelector('#e_go').textContent='Abriendo Gmail…';
+          try{ await compartirPorTandas(prep.arch,prep.cuerpo,datos.asunto); }
+          catch(e){
+            if(e&&e.name==='AbortError'){ m.querySelector('#e_go').textContent='✉️ Abrir Gmail con '+n+' fotos'; return; }
+            alert('No se pudo compartir:\n\n'+((e&&(e.name?e.name+' — ':'')+(e.message||e))||e)+'\n\nLas fotos siguen guardadas en la visita.');
+            return;
+          }
+          v.enviada=true; v.enviadaEl=new Date().toISOString(); await guarda('visitas',v);
+          cierra(); ruta();
+        };
+        return;
+      }
+      // Se marca como enviada directamente: ya se ha abierto el correo con todo.
       v.enviada=true; v.enviadaEl=new Date().toISOString(); await guarda('visitas',v);
       cierra();
       ruta();
@@ -513,8 +537,10 @@ async function enviarVisita(v,as,datos){
   const arch=[];
   for(const x of await archivosDeVisita(as,pre)) arch.push(new File([x.blob],x.nombre,{type:'image/jpeg'}));
   if(arch.length && navigator.canShare && navigator.canShare({files:arch})){
-    await compartirPorTandas(arch,cuerpo,datos.asunto);
-    return;
+    // NO se comparte aquí: Android solo deja compartir si el toque es reciente, y
+    // preparar 15-20 fotos tarda más que ese margen. Se devuelven ya listas y el
+    // último toque (el botón final) es el que comparte, sin nada por medio.
+    return {arch,cuerpo};
   }
   // Respaldo: correo sin adjuntos, con el texto
   location.href='mailto:'+encodeURIComponent(datos.para)+'?subject='+encodeURIComponent(datos.asunto)+'&body='+encodeURIComponent(cuerpo);
