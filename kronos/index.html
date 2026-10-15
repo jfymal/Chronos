@@ -74,7 +74,7 @@ h2{font-size:1.05rem;margin:0 0 4px}
 <div id="zoom"><img id="zi" alt=""><button class="x" id="zx">&#10005;</button><div class="pie" id="zp"></div></div>
 <script src="capacitor.js"></script>
 <script>
-const VER='v20';   // cámbialo en cada publicación para saber qué versión tienes
+const VER='v21';   // cámbialo en cada publicación para saber qué versión tienes
 
 /* ============ almacén local ============ */
 const DB='kronos-db';
@@ -454,26 +454,26 @@ async function pantallaEnviar(v){
       }
       if(prep && prep.arch && prep.arch.length){
         const n=prep.arch.length;
-        boton.outerHTML='<button class="btn enviar grande" id="e_go">✉️ Abrir Gmail con '+n+' foto'+(n===1?'':'s')+'</button>';
+        boton.outerHTML='<button class="btn enviar grande" id="e_go">📤 Compartir '+n+' foto'+(n===1?'':'s')+'</button>';
         const bgo=m.querySelector('#e_go');
         // Android no aguanta que se le pasen muchas fotos de golpe al correo, así
         // que se reparten en tandas: cada correo se abre con su propio toque.
-        const por=Math.max(1,Math.min(30,Number(AJ.porCorreo)||20));
+        const por=prep.arch.length||1;   // todas de una vez: la app la eliges en la hoja de Android
         const trozos=[];
         for(let i=0;i<prep.arch.length;i+=por) trozos.push(prep.arch.slice(i,i+por));
         let k=0;
         const pintarBoton=()=>{
           bgo.disabled=false;
           bgo.textContent = trozos.length>1
-            ? '✉️ Abrir Gmail · '+trozos[k].length+' foto'+(trozos[k].length===1?'':'s')+' ('+(k+1)+'/'+trozos.length+')'
-            : '✉️ Abrir Gmail con '+trozos[0].length+' foto'+(trozos[0].length===1?'':'s');
+            ? '📤 Compartir '+trozos[k].length+' foto'+(trozos[k].length===1?'':'s')+' ('+(k+1)+'/'+trozos.length+')'
+            : '📤 Compartir '+trozos[0].length+' foto'+(trozos[0].length===1?'':'s');
         };
         bgo.onclick=()=>{
           bgo.disabled=true;
-          bgo.textContent='Abriendo Gmail…';
+          bgo.textContent='Abriendo…';
           let pr;
           try{ pr=navigator.share({files:trozos[k],text:prep.cuerpo,title:datos.asunto}); }
-          catch(e){ bgo.disabled=false; pintarBoton(); alert('No se pudo compartir:\n\n'+((e&&e.message)||e)); return; }
+          catch(e){ bgo.disabled=false; pintarBoton(); alert('No se pudo compartir:\n\n'+((e&&(e.name?e.name+' — ':'')+(e.message||e))||e)); return; }
           Promise.resolve(pr).then(async()=>{
             k++;
             if(k<trozos.length){ pintarBoton(); return; }
