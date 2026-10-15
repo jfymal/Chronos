@@ -74,7 +74,7 @@ h2{font-size:1.05rem;margin:0 0 4px}
 <div id="zoom"><img id="zi" alt=""><button class="x" id="zx">&#10005;</button><div class="pie" id="zp"></div></div>
 <script src="capacitor.js"></script>
 <script>
-const VER='v16';   // cámbialo en cada publicación para saber qué versión tienes
+const VER='v17';   // cámbialo en cada publicación para saber qué versión tienes
 
 /* ============ almacén local ============ */
 const DB='kronos-db';
@@ -98,7 +98,7 @@ const hoy=()=>new Date().toLocaleDateString('es-ES');
 const slug=s=>String(s||'foto').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9]+/g,'-').replace(/^-+|-+$/g,'').toLowerCase().slice(0,40)||'foto';
 
 /* ============ ajustes (recuerdan lo que usas) ============ */
-const AJ={para:'juanfran.221gestion@gmail.com',obras:['Son Roca','Joan Mestre 20','Arc de Sant Marti 46','Reis Catolics 74'],camara:'nativa'};
+const AJ={para:'juanfran.221gestion@gmail.com',obras:['Son Roca','Joan Mestre 20','Arc de Sant Marti 46','Reis Catolics 74'],camara:'nativa',porCorreo:6};
 try{Object.assign(AJ,JSON.parse(localStorage.getItem('kronos-aj')||'{}'));}catch(_){}
 const guardaAj=()=>{try{localStorage.setItem('kronos-aj',JSON.stringify(AJ));}catch(_){}};
 
@@ -456,22 +456,36 @@ async function pantallaEnviar(v){
         const n=prep.arch.length;
         boton.outerHTML='<button class="btn enviar grande" id="e_go">✉️ Abrir Gmail con '+n+' foto'+(n===1?'':'s')+'</button>';
         const bgo=m.querySelector('#e_go');
+        // Android no aguanta que se le pasen muchas fotos de golpe al correo, así
+        // que se reparten en tandas: cada correo se abre con su propio toque.
+        const por=Math.max(1,Math.min(20,Number(AJ.porCorreo)||6));
+        const trozos=[];
+        for(let i=0;i<prep.arch.length;i+=por) trozos.push(prep.arch.slice(i,i+por));
+        let k=0;
+        const pintarBoton=()=>{
+          bgo.disabled=false;
+          bgo.textContent = trozos.length>1
+            ? '✉️ Abrir Gmail · '+trozos[k].length+' foto'+(trozos[k].length===1?'':'s')+' ('+(k+1)+'/'+trozos.length+')'
+            : '✉️ Abrir Gmail con '+trozos[0].length+' foto'+(trozos[0].length===1?'':'s');
+        };
         bgo.onclick=()=>{
-          // Compartir EN EL MISMO TOQUE, sin ningún paso asíncrono por delante:
-          // Android es estricto con esto (NotAllowedError si no hay gesto reciente).
+          bgo.disabled=true;
           bgo.textContent='Abriendo Gmail…';
           let pr;
-          try{ pr=navigator.share({files:prep.arch,text:prep.cuerpo,title:datos.asunto}); }
-          catch(e){ bgo.textContent='✉️ Abrir Gmail con '+n+' fotos'; alert('No se pudo compartir:\n\n'+((e&&e.message)||e)); return; }
+          try{ pr=navigator.share({files:trozos[k],text:prep.cuerpo,title:datos.asunto}); }
+          catch(e){ bgo.disabled=false; pintarBoton(); alert('No se pudo compartir:\n\n'+((e&&e.message)||e)); return; }
           Promise.resolve(pr).then(async()=>{
+            k++;
+            if(k<trozos.length){ pintarBoton(); return; }
             v.enviada=true; v.enviadaEl=new Date().toISOString(); await guarda('visitas',v);
             cierra(); ruta();
           }).catch((e)=>{
-            bgo.textContent='✉️ Abrir Gmail con '+n+' fotos';
+            pintarBoton();
             if(e&&e.name==='AbortError') return;
-            alert('No se pudo compartir:\n\n'+((e&&(e.name?e.name+' — ':'')+(e.message||e))||e)+'\n\nLas fotos siguen guardadas: puedes intentarlo otra vez.');
+            alert('No se pudo compartir:\n\n'+((e&&(e.name?e.name+' — ':'')+(e.message||e))||e)+'\n\nPuedes bajar las «fotos por correo» en Ajustes y volver a intentarlo.');
           });
         };
+        pintarBoton();
         return;
       }
       // Se marca como enviada directamente: ya se ha abierto el correo con todo.
@@ -562,6 +576,9 @@ function ajustesDialog(){
       <option value="nativa"${AJ.camara==='nativa'?' selected':''}>La del móvil (recomendada)</option>
       <option value="app"${AJ.camara==='app'?' selected':''}>Integrada en la app (si la del móvil falla)</option>
     </select>
+    <label>Fotos por correo</label>
+    <input id="a_por" type="number" min="1" max="20" value="${AJ.porCorreo||6}">
+    <p class="hint">Android falla si se le pasan demasiadas fotos de golpe al correo. Con 6 suele ir bien; si te falla, baja el número.</p>
     <label>Obras sugeridas (una por línea)</label>
     <textarea id="a_obras" rows="6">${esc(AJ.obras.join('\n'))}</textarea>
     <p class="hint">Se irán añadiendo solas las que uses. Aquí puedes corregirlas o borrar las que ya no quieras.</p>
@@ -582,6 +599,7 @@ function ajustesDialog(){
     m.querySelector('#a_ok').onclick=()=>{
       AJ.para=m.querySelector('#a_para').value.trim();
       AJ.camara=m.querySelector('#a_cam').value;
+      AJ.porCorreo=Math.max(1,Math.min(20,Number(m.querySelector('#a_por').value)||6));
       AJ.obras=[...new Set(m.querySelector('#a_obras').value.split('\n').map(s=>s.trim()).filter(Boolean))];
       guardaAj(); cierra();
     };
