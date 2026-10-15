@@ -74,7 +74,7 @@ h2{font-size:1.05rem;margin:0 0 4px}
 <div id="zoom"><img id="zi" alt=""><button class="x" id="zx">&#10005;</button><div class="pie" id="zp"></div></div>
 <script src="capacitor.js"></script>
 <script>
-const VER='v23';
+const VER='v24';
 /* --- Registro: lo que hace la app, para poder diagnosticar sin adivinar --- */
 const LOG=[];
 function log(){
@@ -468,8 +468,8 @@ async function pantallaEnviar(v){
         return;
       }
       if(prep && prep.arch && prep.arch.length){
-        const n=prep.arch.length;
-        boton.outerHTML='<button class="btn enviar grande" id="e_go">📤 Compartir '+n+' foto'+(n===1?'':'s')+'</button>';
+        const n=prep.fotos||prep.arch.length;
+        boton.outerHTML='<button class="btn enviar grande" id="e_go">📤 Compartir '+n+' foto'+(n===1?'':'s')+' (ZIP)</button>';
         const bgo=m.querySelector('#e_go');
         // Android no aguanta que se le pasen muchas fotos de golpe al correo, así
         // que se reparten en tandas: cada correo se abre con su propio toque.
@@ -620,9 +620,15 @@ async function enviarVisita(v,as,datos){
   // Fotos sueltas, ligeras (1000 px): así Android no tiene que pasar archivos
   // grandes y van con su nombre y en orden, como te gusta.
   const t0=Date.now();
+  // UN solo adjunto: el ZIP con todas las fotos dentro, con sus nombres y en orden.
+  // El registro demostró que Android rechaza muchos archivos a la vez (aunque pesen
+  // poco): con un único archivo no hay ese problema.
   const lista=await archivosDeVisita(as,pre);
   const arch=[];
-  for(const x of lista) arch.push(new File([x.blob],x.nombre,{type:'image/jpeg'}));
+  if(lista.length){
+    const zip=await crearZip(lista);
+    arch.push(new File([zip],(pre||'visita')+'_fotos.zip',{type:'application/zip'}));
+  }
   const total=arch.reduce((n,f)=>n+(f.size||0),0);
   log('preparadas',arch.length,'fotos ·',(total/1048576).toFixed(2),'MB · en',((Date.now()-t0)/1000).toFixed(1),'s');
   log('canShare(files):',String(!!(navigator.canShare&&navigator.canShare({files:arch}))));
@@ -630,7 +636,7 @@ async function enviarVisita(v,as,datos){
     // NO se comparte aquí: Android solo deja compartir si el toque es reciente, y
     // preparar 15-20 fotos tarda más que ese margen. Se devuelven ya listas y el
     // último toque (el botón final) es el que comparte, sin nada por medio.
-    return {arch,cuerpo};
+    return {arch,cuerpo,fotos:lista.length};
   }
   // Respaldo: correo sin adjuntos, con el texto
   location.href='mailto:'+encodeURIComponent(datos.para)+'?subject='+encodeURIComponent(datos.asunto)+'&body='+encodeURIComponent(cuerpo);
