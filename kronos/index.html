@@ -74,7 +74,22 @@ h2{font-size:1.05rem;margin:0 0 4px}
 <div id="zoom"><img id="zi" alt=""><button class="x" id="zx">&#10005;</button><div class="pie" id="zp"></div></div>
 <script src="capacitor.js"></script>
 <script>
-const VER='v21';   // cámbialo en cada publicación para saber qué versión tienes
+const VER='v22';
+/* --- Registro: lo que hace la app, para poder diagnosticar sin adivinar --- */
+const LOG=[];
+function log(){
+  let txt='';
+  for(const a of arguments){
+    txt += (typeof a==='string'?a:(function(){try{return JSON.stringify(a);}catch(_){return String(a);}})()) + ' ';
+  }
+  LOG.push(new Date().toLocaleTimeString('es-ES')+'  '+txt.trim());
+  if(LOG.length>400) LOG.shift();
+}
+window.addEventListener('error',(e)=>{ try{ log('ERROR:',String(e.message||''),(e.filename||'')+':'+(e.lineno||'')); }catch(_){} });
+window.addEventListener('unhandledrejection',(e)=>{
+  const r=e&&e.reason;
+  try{ log('PROMESA SIN CAPTURAR:',String((r&&r.name?r.name+': ':'')+(r&&r.message||r))); }catch(_){}
+});   // cámbialo en cada publicación para saber qué versión tienes
 
 /* ============ almacén local ============ */
 const DB='kronos-db';
@@ -472,16 +487,19 @@ async function pantallaEnviar(v){
           bgo.disabled=true;
           bgo.textContent='Abriendo…';
           let pr;
-          try{ pr=navigator.share({files:trozos[k],text:prep.cuerpo,title:datos.asunto}); }
-          catch(e){ bgo.disabled=false; pintarBoton(); alert('No se pudo compartir:\n\n'+((e&&(e.name?e.name+' — ':'')+(e.message||e))||e)); return; }
+          log('share:',trozos[k].length,'archivos ·',(trozos[k].reduce((n,x)=>n+x.blob.size,0)/1048576).toFixed(2),'MB');
+          try{ pr=navigator.share({files:trozos[k],text:prep.cuerpo,title:datos.asunto}); log('navigator.share llamado'); }
+          catch(e){ log('share excepción:',String(e&&e.name),String((e&&e.message)||'')); bgo.disabled=false; pintarBoton(); alert('No se pudo compartir:\n\n'+((e&&(e.name?e.name+' — ':'')+(e.message||e))||e)); return; }
           Promise.resolve(pr).then(async()=>{
             k++;
             if(k<trozos.length){ pintarBoton(); return; }
+            log('share OK');
             v.enviada=true; v.enviadaEl=new Date().toISOString(); await guarda('visitas',v);
             cierra(); ruta();
           }).catch((e)=>{
             pintarBoton();
             if(e&&e.name==='AbortError') return;
+            log('share falló:',String(e&&e.name),String((e&&e.message)||''));
             alert('No se pudo compartir:\n\n'+((e&&(e.name?e.name+' — ':'')+(e.message||e))||e)+'\n\nPuedes bajar las «fotos por correo» en Ajustes y volver a intentarlo.');
           });
         };
@@ -583,6 +601,7 @@ async function crearZip(archivos){
 const blobABase64=b=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(b);});
 
 async function enviarVisita(v,as,datos){
+  log('ENVIAR:',datos.obra,'·',datos.fecha,'· apuntes:',as.length);
   const cuerpo=`Visita — ${datos.obra} — ${datos.fecha}\n\n`+as.map((a,i)=>`${pad(i+1)} — ${a.texto||'(sin comentario)'}`).join('\n');
   const pre=fechaArchivo(datos.fecha,v.creada);
   const Share=capPlugin('Share'), FS=capPlugin('Filesystem');
@@ -600,9 +619,13 @@ async function enviarVisita(v,as,datos){
   // Sale la hoja de Android -> Gmail, con las fotos como adjuntos en orden.
   // Fotos sueltas, ligeras (1000 px): así Android no tiene que pasar archivos
   // grandes y van con su nombre y en orden, como te gusta.
+  const t0=Date.now();
   const lista=await archivosDeVisita(as,pre);
   const arch=[];
   for(const x of lista) arch.push(new File([x.blob],x.nombre,{type:'image/jpeg'}));
+  const total=arch.reduce((n,f)=>n+(f.size||0),0);
+  log('preparadas',arch.length,'fotos ·',(total/1048576).toFixed(2),'MB · en',((Date.now()-t0)/1000).toFixed(1),'s');
+  log('canShare(files):',String(!!(navigator.canShare&&navigator.canShare({files:arch}))));
   if(arch.length && navigator.canShare && navigator.canShare({files:arch})){
     // NO se comparte aquí: Android solo deja compartir si el toque es reciente, y
     // preparar 15-20 fotos tarda más que ese margen. Se devuelven ya listas y el
@@ -614,6 +637,21 @@ async function enviarVisita(v,as,datos){
 }
 
 /* ============ ajustes ============ */
+function registroDialog(){
+  dialogo(`<h2>Registro</h2>
+    <p class="hint">Copia esto y mándamelo: con esto sé exactamente qué pasa.</p>
+    <textarea id="rg" readonly rows="14" style="font-family:ui-monospace,monospace;font-size:.72rem">${esc(LOG.join('\n'))}</textarea>
+    <div class="fila"><button class="btn" id="rg_c">Copiar</button><button class="btn primary" data-x>Cerrar</button></div>`,
+  m=>{
+    const ta=m.querySelector('#rg');
+    ta.scrollTop=ta.scrollHeight;
+    m.querySelector('#rg_c').onclick=async()=>{
+      try{ await navigator.clipboard.writeText(ta.value); alert('Copiado. Pégamelo en el chat.'); }
+      catch(_){ ta.focus(); ta.select(); alert('Selecciona el texto y cópialo a mano.'); }
+    };
+  });
+}
+
 function ajustesDialog(){
   dialogo(`<h2>Ajustes</h2>
     <label>Destinatario habitual</label>
@@ -631,9 +669,11 @@ function ajustesDialog(){
     <p class="hint">Se irán añadiendo solas las que uses. Aquí puedes corregirlas o borrar las que ya no quieras.</p>
     <button class="btn" id="a_upd" style="width:100%;margin-top:12px">Buscar actualizaciones</button>
     <p class="hint">Si algo no te cuadra con lo último que te conté, pulsa aquí: recarga la app saltándose la caché del navegador.</p>
+    <button class="btn" id="a_log" style="width:100%;margin-top:12px">Ver registro (para diagnósticos)</button>
     <button class="btn danger" id="a_purga" style="width:100%;margin-top:12px">Borrar todas las enviadas</button>
     <div class="fila"><button class="btn" data-x>Cerrar</button><button class="btn primary" id="a_ok">Guardar</button></div>`,
   m=>{
+    m.querySelector('#a_log').onclick=()=>{ cierra(); registroDialog(); };
     m.querySelector('#a_purga').onclick=async()=>{
       const env=visitas.filter(x=>x.enviada);
       if(!env.length){ alert('No hay ninguna visita marcada como enviada.'); return; }
@@ -745,6 +785,10 @@ async function limpiarEnviadas(){
 /* ============ arranque ============ */
 (async()=>{
   document.getElementById('ver').textContent=VER;
+  log('Kronos',VER,'arranca');
+  log('canShare:',String(!!navigator.canShare),'· archivos:',String(!!(navigator.canShare&&navigator.canShare({files:[new File([new Blob(['x'])],'a.jpg',{type:'image/jpeg'})]}))));
+  log('instalada:',String(!!(window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches)));
+  log('navegador:',String(navigator.userAgent||'').slice(0,110));
   if('serviceWorker' in navigator){ try{ await navigator.serviceWorker.register('sw.js'); }catch(_){} }
   await recibirCompartidas();
   try{ await limpiarEnviadas(); }catch(_){}
