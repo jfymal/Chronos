@@ -74,7 +74,7 @@ h2{font-size:1.05rem;margin:0 0 4px}
 <div id="zoom"><img id="zi" alt=""><button class="x" id="zx">&#10005;</button><div class="pie" id="zp"></div></div>
 <script src="capacitor.js"></script>
 <script>
-const VER='v13';   // cámbialo en cada publicación para saber qué versión tienes
+const VER='v14';   // cámbialo en cada publicación para saber qué versión tienes
 
 /* ============ almacén local ============ */
 const DB='kronos-db';
@@ -227,7 +227,7 @@ async function nuevaVisita(){
   const lista=AJ.obras.map(o=>`<option value="${esc(o)}">`).join('');
   dialogo(`<h2>Nueva visita</h2>
     <label>Obra</label>
-    <input id="n_obra" list="obras" placeholder="Escribe o elige la obra" value="${esc(AJ.obras[0]||'')}">
+    <input id="n_obra" list="obras" placeholder="Escribe o elige la obra" value="">
     <datalist id="obras">${lista}</datalist>
     <label>Fecha</label>
     <input id="n_fecha" value="${hoy()}">
@@ -442,7 +442,7 @@ async function pantallaEnviar(v){
       if(!AJ.obras.includes(datos.obra)){AJ.obras.unshift(datos.obra);}
       if(datos.para) AJ.para=datos.para;
       guardaAj();
-      try{ await enviarVisita(v,as,datos); }catch(e){ alert('No se pudo preparar el correo:\n\n'+((e&&e.message)||e)); return; }
+      try{ await enviarVisita(v,as,datos); }catch(e){ if(e&&e.name==='AbortError') return; alert('No se pudo preparar el correo:\n\n'+((e&&(e.name?e.name+' — ':'')+(e.message||e))||e)+'\n\nLas fotos siguen guardadas en la visita: puedes intentarlo otra vez.'); return; }
       // Se marca como enviada directamente: ya se ha abierto Gmail con todo puesto.
       // Si al final no lo envías, en la visita está "Marcar como NO enviada".
       v.enviada=true; v.enviadaEl=new Date().toISOString(); await guarda('visitas',v);
@@ -475,6 +475,23 @@ async function archivosDeVisita(as,fecha){
   return out;
 }
 
+// Compartir con Android. Con muchos archivos a la vez, Android se queda sin
+// espacio para pasarlos de golpe (límite del sistema, no de la app). Si el primer
+// intento falla, se manda en tandas: cada correo lleva el mismo texto y las fotos
+// con su número, así que no se pierde el orden.
+async function compartirPorTandas(arch,cuerpo,asunto){
+  try{
+    await navigator.share({files:arch,text:cuerpo,title:asunto});
+    return;
+  }catch(e){
+    if(e && e.name==='AbortError') throw e;     // lo cancelaste tú: no reintentar
+  }
+  const TANDA=8;
+  for(let i=0;i<arch.length;i+=TANDA){
+    await navigator.share({files:arch.slice(i,i+TANDA),text:cuerpo,title:asunto});
+  }
+}
+
 const blobABase64=b=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(',')[1]);r.onerror=rej;r.readAsDataURL(b);});
 
 async function enviarVisita(v,as,datos){
@@ -496,7 +513,7 @@ async function enviarVisita(v,as,datos){
   const arch=[];
   for(const x of await archivosDeVisita(as,pre)) arch.push(new File([x.blob],x.nombre,{type:'image/jpeg'}));
   if(arch.length && navigator.canShare && navigator.canShare({files:arch})){
-    await navigator.share({files:arch,text:cuerpo,title:datos.asunto});
+    await compartirPorTandas(arch,cuerpo,datos.asunto);
     return;
   }
   // Respaldo: correo sin adjuntos, con el texto
