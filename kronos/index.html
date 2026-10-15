@@ -74,7 +74,7 @@ h2{font-size:1.05rem;margin:0 0 4px}
 <div id="zoom"><img id="zi" alt=""><button class="x" id="zx">&#10005;</button><div class="pie" id="zp"></div></div>
 <script src="capacitor.js"></script>
 <script>
-const VER='v19';   // cámbialo en cada publicación para saber qué versión tienes
+const VER='v20';   // cámbialo en cada publicación para saber qué versión tienes
 
 /* ============ almacén local ============ */
 const DB='kronos-db';
@@ -98,7 +98,7 @@ const hoy=()=>new Date().toLocaleDateString('es-ES');
 const slug=s=>String(s||'foto').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9]+/g,'-').replace(/^-+|-+$/g,'').toLowerCase().slice(0,40)||'foto';
 
 /* ============ ajustes (recuerdan lo que usas) ============ */
-const AJ={para:'juanfran.221gestion@gmail.com',obras:['Son Roca','Joan Mestre 20','Arc de Sant Marti 46','Reis Catolics 74'],camara:'nativa',porCorreo:12};
+const AJ={para:'juanfran.221gestion@gmail.com',obras:['Son Roca','Joan Mestre 20','Arc de Sant Marti 46','Reis Catolics 74'],camara:'nativa',porCorreo:20};
 try{Object.assign(AJ,JSON.parse(localStorage.getItem('kronos-aj')||'{}'));}catch(_){}
 const guardaAj=()=>{try{localStorage.setItem('kronos-aj',JSON.stringify(AJ));}catch(_){}};
 
@@ -458,7 +458,7 @@ async function pantallaEnviar(v){
         const bgo=m.querySelector('#e_go');
         // Android no aguanta que se le pasen muchas fotos de golpe al correo, así
         // que se reparten en tandas: cada correo se abre con su propio toque.
-        const por=prep.arch.length||1;   // el ZIP entero cabe en un solo correo
+        const por=Math.max(1,Math.min(30,Number(AJ.porCorreo)||20));
         const trozos=[];
         for(let i=0;i<prep.arch.length;i+=por) trozos.push(prep.arch.slice(i,i+por));
         let k=0;
@@ -513,11 +513,11 @@ async function archivosDeVisita(as,fecha){
     for(let k=0;k<ids.length;k++){
       const f=await uno('fotos',ids[k]); if(!f||!f.blob) continue;
       const letra=ids.length>1?String.fromCharCode(97+k):'';
-      // Copia ligera SOLO para el correo (1200 px, calidad 68 %): así caben muchas
+      // Copia ligera SOLO para el correo (1000 px, calidad 62 %): así caben muchas
       // más fotos de una vez y no nos acercamos al límite de Gmail. La foto que se
       // guarda en la visita mantiene su calidad.
       let salida=f.blob;
-      try{ salida=await comprimir(f.blob,1200,0.68); }catch(_){}
+      try{ salida=await comprimir(f.blob,1000,0.62); }catch(_){}
       out.push({nombre:(fecha?fecha+'_':'')+pad(i+1)+letra+'.jpg',blob:salida});
     }
   }
@@ -598,13 +598,11 @@ async function enviarVisita(v,as,datos){
   }
   // Navegador (Chrome en Android): compartir con las fotos adjuntas.
   // Sale la hoja de Android -> Gmail, con las fotos como adjuntos en orden.
-  // Un único adjunto: el ZIP con todas las fotos dentro, en orden.
+  // Fotos sueltas, ligeras (1000 px): así Android no tiene que pasar archivos
+  // grandes y van con su nombre y en orden, como te gusta.
   const lista=await archivosDeVisita(as,pre);
   const arch=[];
-  if(lista.length){
-    const zip=await crearZip(lista);
-    arch.push(new File([zip],(pre||'visita')+'_fotos.zip',{type:'application/zip'}));
-  }
+  for(const x of lista) arch.push(new File([x.blob],x.nombre,{type:'image/jpeg'}));
   if(arch.length && navigator.canShare && navigator.canShare({files:arch})){
     // NO se comparte aquí: Android solo deja compartir si el toque es reciente, y
     // preparar 15-20 fotos tarda más que ese margen. Se devuelven ya listas y el
@@ -626,7 +624,7 @@ function ajustesDialog(){
       <option value="app"${AJ.camara==='app'?' selected':''}>Integrada en la app (si la del móvil falla)</option>
     </select>
     <label>Fotos por correo</label>
-    <input id="a_por" type="number" min="1" max="20" value="${AJ.porCorreo||12}">
+    <input id="a_por" type="number" min="1" max="30" value="${AJ.porCorreo||20}">
     <p class="hint">Android falla si se le pasan demasiadas fotos de golpe al correo. Con 6 suele ir bien; si te falla, baja el número.</p>
     <label>Obras sugeridas (una por línea)</label>
     <textarea id="a_obras" rows="6">${esc(AJ.obras.join('\n'))}</textarea>
