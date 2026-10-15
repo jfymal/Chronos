@@ -74,7 +74,7 @@ h2{font-size:1.05rem;margin:0 0 4px}
 <div id="zoom"><img id="zi" alt=""><button class="x" id="zx">&#10005;</button><div class="pie" id="zp"></div></div>
 <script src="capacitor.js"></script>
 <script>
-const VER='v15';   // cámbialo en cada publicación para saber qué versión tienes
+const VER='v16';   // cámbialo en cada publicación para saber qué versión tienes
 
 /* ============ almacén local ============ */
 const DB='kronos-db';
@@ -455,16 +455,22 @@ async function pantallaEnviar(v){
       if(prep && prep.arch && prep.arch.length){
         const n=prep.arch.length;
         boton.outerHTML='<button class="btn enviar grande" id="e_go">✉️ Abrir Gmail con '+n+' foto'+(n===1?'':'s')+'</button>';
-        m.querySelector('#e_go').onclick=async()=>{
-          m.querySelector('#e_go').textContent='Abriendo Gmail…';
-          try{ await compartirPorTandas(prep.arch,prep.cuerpo,datos.asunto); }
-          catch(e){
-            if(e&&e.name==='AbortError'){ m.querySelector('#e_go').textContent='✉️ Abrir Gmail con '+n+' fotos'; return; }
-            alert('No se pudo compartir:\n\n'+((e&&(e.name?e.name+' — ':'')+(e.message||e))||e)+'\n\nLas fotos siguen guardadas en la visita.');
-            return;
-          }
-          v.enviada=true; v.enviadaEl=new Date().toISOString(); await guarda('visitas',v);
-          cierra(); ruta();
+        const bgo=m.querySelector('#e_go');
+        bgo.onclick=()=>{
+          // Compartir EN EL MISMO TOQUE, sin ningún paso asíncrono por delante:
+          // Android es estricto con esto (NotAllowedError si no hay gesto reciente).
+          bgo.textContent='Abriendo Gmail…';
+          let pr;
+          try{ pr=navigator.share({files:prep.arch,text:prep.cuerpo,title:datos.asunto}); }
+          catch(e){ bgo.textContent='✉️ Abrir Gmail con '+n+' fotos'; alert('No se pudo compartir:\n\n'+((e&&e.message)||e)); return; }
+          Promise.resolve(pr).then(async()=>{
+            v.enviada=true; v.enviadaEl=new Date().toISOString(); await guarda('visitas',v);
+            cierra(); ruta();
+          }).catch((e)=>{
+            bgo.textContent='✉️ Abrir Gmail con '+n+' fotos';
+            if(e&&e.name==='AbortError') return;
+            alert('No se pudo compartir:\n\n'+((e&&(e.name?e.name+' — ':'')+(e.message||e))||e)+'\n\nLas fotos siguen guardadas: puedes intentarlo otra vez.');
+          });
         };
         return;
       }
