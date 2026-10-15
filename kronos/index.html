@@ -74,7 +74,7 @@ h2{font-size:1.05rem;margin:0 0 4px}
 <div id="zoom"><img id="zi" alt=""><button class="x" id="zx">&#10005;</button><div class="pie" id="zp"></div></div>
 <script src="capacitor.js"></script>
 <script>
-const VER='v22';
+const VER='v23';
 /* --- Registro: lo que hace la app, para poder diagnosticar sin adivinar --- */
 const LOG=[];
 function log(){
@@ -487,7 +487,7 @@ async function pantallaEnviar(v){
           bgo.disabled=true;
           bgo.textContent='Abriendo…';
           let pr;
-          log('share:',trozos[k].length,'archivos ·',(trozos[k].reduce((n,x)=>n+x.blob.size,0)/1048576).toFixed(2),'MB');
+          log('share:',trozos[k].length,'archivos ·',(trozos[k].reduce((n,x)=>n+((x.blob?x.blob.size:x.size)||0),0)/1048576).toFixed(2),'MB');
           try{ pr=navigator.share({files:trozos[k],text:prep.cuerpo,title:datos.asunto}); log('navigator.share llamado'); }
           catch(e){ log('share excepción:',String(e&&e.name),String((e&&e.message)||'')); bgo.disabled=false; pintarBoton(); alert('No se pudo compartir:\n\n'+((e&&(e.name?e.name+' — ':'')+(e.message||e))||e)); return; }
           Promise.resolve(pr).then(async()=>{
